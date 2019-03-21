@@ -80,13 +80,13 @@ Constraint SPMV_BASE
        and {vector_read.value} as {src2}
        and {output.address} as {update_address} and
   inherits VectorStore
-      with {begin} as {begin} at {output} and
+      with {loop.begin} as {begin} at {output} and
   inherits VectorRead
-      with {begin} as {begin} at {matrix_read} and
+      with {loop.begin} as {begin} at {matrix_read} and
   inherits VectorRead
-      with {begin} as {begin} at {vector_read} and
+      with {loop.begin} as {begin} at {vector_read} and
   inherits VectorRead
-      with {begin} as {begin} at {index_read} and
+      with {loop.begin} as {begin} at {index_read} and
   {precursor} has control flow to {begin} and
   {precursor} control flow dominates {begin})
 End
@@ -165,9 +165,9 @@ Constraint ReadRange
       {range_begin} strictly control flow dominates {end})) and
 
   inherits VectorRead with {idx} as {idx}
-                       and {begin} as {begin} at {iter_begin_read} and
+                       and {loop.begin} as {begin} at {iter_begin_read} and
   inherits VectorRead with {idx} as {idx}
-                       and {begin} as {begin} at {iter_end_read})
+                       and {loop.begin} as {begin} at {iter_end_read})
 End
 
 Constraint For
