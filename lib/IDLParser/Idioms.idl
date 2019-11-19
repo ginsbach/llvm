@@ -30,30 +30,30 @@ Constraint SPMV_CSR
       control flow dominates {inner_loop.begin} and
   {outer_loop.end} strictly
       control flow post dominates {inner_loop.end} and
+  inherits VectorStore
+      with {outer_loop}          as {scope}
+       and {outer_loop.iterator} as {input_index}
+                                 at {output} and
+  inherits VectorRead
+      with {outer_loop}          as {scope}
+       and {inner_loop.src1}     as {value}
+       and {inner_loop.iterator} as {input_index}
+                                 at {val} and
+  inherits VectorRead
+      with {outer_loop}      as {scope}
+       and {inner_loop.src2} as {value}
+       and {col_ind.value}   as {input_index}
+                             at {vector} and
+  inherits VectorRead
+      with {outer_loop}          as {scope}
+       and {inner_loop.iterator} as {input_index}
+                                 at {col_ind} and
   inherits ReadRanges
      with {outer_loop}            as {scope}
       and {inner_loop.iter_begin} as {range_begin}
       and {inner_loop.iter_end}   as {range_end}
       and {outer_loop.iterator}   as {input_index}
-                                  at {read_range} and
-  inherits VectorStore
-      with {outer_loop}          as {scope}
-       and {outer_loop.iterator} as {input_index} 
-                                 at {output} and
-  inherits VectorRead
-      with {outer_loop}          as {scope}
-       and {inner_loop.src1}     as {value}
-       and {inner_loop.iterator} as {input_index} 
-                                 at {val} and
-  inherits VectorRead
-      with {outer_loop}      as {scope}
-       and {inner_loop.src2} as {value}
-       and {col_ind.value}   as {input_index} 
-                             at {vector} and
-  inherits VectorRead
-      with {outer_loop}          as {scope}
-       and {inner_loop.iterator} as {input_index} 
-                                 at {col_ind})
+                                  at {read_range})
 End
 
 Export
@@ -64,24 +64,18 @@ Constraint SPMV_JDS
       control flow dominates {inner_loop.begin} and
   {outer_loop.end} strictly
       control flow post dominates {inner_loop.end} and
-  inherits ReadZeroRanges
-     with {outer_loop}            as {scope}
-      and {inner_loop.iter_begin} as {range_begin}
-      and {inner_loop.iter_end}   as {range_end}
-      and {outer_loop.iterator}   as {input_index}
-                                  at {read_range} and
   inherits VectorStore
       with {outer_loop} as {scope}
-       and {perm.value} as {input_index} 
+       and {perm.value} as {input_index}
                         at {output} and
   inherits VectorRead
       with {outer_loop}          as {scope}
-       and {outer_loop.iterator} as {input_index} 
+       and {outer_loop.iterator} as {input_index}
                                  at {perm} and
   inherits VectorRead
       with {outer_loop}      as {scope}
        and {inner_loop.src1} as {value}
-       and {tmp1.value}      as {input_index} 
+       and {tmp1.value}      as {input_index}
                              at {val} and
   inherits Addition
       with {jd_ptr.value}        as {input}
@@ -89,17 +83,23 @@ Constraint SPMV_JDS
                                  at {tmp1} and
   inherits VectorRead
       with {outer_loop}          as {scope}
-       and {inner_loop.iterator} as {input_index} 
+       and {inner_loop.iterator} as {input_index}
                                  at {jd_ptr} and
   inherits VectorRead
       with {outer_loop}      as {scope}
        and {inner_loop.src2} as {value}
-       and {col_ind.value}   as {input_index} 
+       and {col_ind.value}   as {input_index}
                              at {vector} and
   inherits VectorRead
       with {outer_loop} as {scope}
-       and {tmp1.value} as {input_index} 
-                        at {col_ind})
+       and {tmp1.value} as {input_index}
+                        at {col_ind} and
+  inherits ReadZeroRanges
+     with {outer_loop}            as {scope}
+      and {inner_loop.iter_begin} as {range_begin}
+      and {inner_loop.iter_end}   as {range_end}
+      and {outer_loop.iterator}   as {input_index}
+                                  at {read_range})
 End
 
 Constraint ReadZeroRanges
