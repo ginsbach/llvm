@@ -14,19 +14,12 @@ SkipResult BackendEdge::skip_invalid(unsigned& c) const
         return SkipResult::FAIL;
     }
 
-    for(auto ptr = dst_ptr; ptr != src_ptr->end(); ptr++)
-    {
-        if(*ptr > c)
-        {
-            c = *ptr;
-            return SkipResult::CHANGEPASS;
-        }
-
-        if(*ptr == c)
-            return SkipResult::PASS;
-    }
-
-    return SkipResult::FAIL;
+    auto ptr = dst_ptr;
+    while(ptr != src_ptr->end() && c > *ptr) ++ptr;
+    if(ptr == src_ptr->end()) return SkipResult::FAIL;
+    if(*ptr == c) return SkipResult::PASS;
+    c = *ptr;
+    return SkipResult::CHANGEPASS;
 }
 
 template<unsigned idx>
