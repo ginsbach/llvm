@@ -32,14 +32,23 @@ private:
 bool ResearchReplacerBase::runOnModule(Module& module)
 {
     ModuleSlotTracker slot_tracker(&module);
+    auto print_module = [&slot_tracker](Module& m)->std::string {
+        std::string string_representation;
+        llvm::raw_string_ostream out_stream(string_representation);
+        out_stream<<m;
+        return string_representation;
+    };
 
     std::string filename = module.getName();
     for(char& c : filename) if(c == '/') c = '_';
 
-    std::stringstream sstr;
-    sstr<<"replace-report-"<<filename<<".json";
-    std::ofstream ofs(sstr.str().c_str());
-    ofs<<"{ \"filename\": \""<<(std::string)module.getName()<<"\",\n  \"detected\": [";
+    std::ofstream ofs("replace-source-"+filename+".ll");
+    ofs<<print_module(module);
+    ofs.close();
+
+    ofs.open("replace-report-"+filename+".json");
+    ofs<<"{ \"filename\": \""<<(std::string)module.getName()<<"\",\n"
+         "  \"detected\": [";
 
     char first_hit1 = true;
     for(Function& function : module.getFunctionList())
@@ -70,14 +79,16 @@ bool ResearchReplacerBase::runOnModule(Module& module)
                     ofs<<"\n  }";
                     first_hit1 = false;
 
-//                    if(std::get<2>(idiom))
-//                        std::get<2>(idiom)(function, solution);
+                    if(std::get<2>(idiom))
+                        std::get<2>(idiom)(function, solution);
                 }
             }
         }
     }
 
     ofs<<"]\n}\n";
+    ofs.close();
+
     return false;
 }
 
@@ -117,7 +128,7 @@ class ResearchReplacer : public ResearchReplacerBase
 {
 public:
     ResearchReplacer() : ResearchReplacerBase({
-    {"GEMM", [](const Solution& s)->Value*{ return s["precursor"]; },
+    {"GEMM", [](const Solution& s)->Value*{ return s["for"][0]["loop"]["precursor"]; },
     [](Function& function, Solution solution) {
         replace_idiom(function, solution, "gemm_harness", solution["precursor"],
                       {solution["loop"][0]["iter_end"],
