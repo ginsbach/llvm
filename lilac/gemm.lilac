@@ -1,4 +1,4 @@
-COMPUTATION mm
+COMPUTATION gemm
   forall(0 <= i < N) {
     forall(0 <= j < M) {
       output[i*M+j] = sum(0 <= k < K)
@@ -6,13 +6,13 @@ COMPUTATION mm
     }
   }
 
-HARNESS openblas IMPLEMENTS mm
+HARNESS openblas IMPLEMENTS gemm
   cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                N, M, K, 1.0, left, K, right, N, 0.0, output, N);
 CppHeaderFiles
   #include <cblas.h>
 
-HARNESS cuda IMPLEMENTS mm
+HARNESS cuda IMPLEMENTS gemm
   double alpha = 1.0;
   double beta  = 0.0;
   cublasDgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N,

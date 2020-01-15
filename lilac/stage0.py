@@ -280,7 +280,6 @@ def parse_computation(computation):
 
             else:
                 break
-    print ast
     return ast
 
 def generate_naive_recursive(parsed):
@@ -401,9 +400,8 @@ def generate_interface(parsed):
 
 
 def generateIDL(parsed):
-    if parsed[0][0] == "loop":
-        return """Constraint GEMM 
-( inherits ForNest(N=3) and
+    if parsed[0][0] == "loop" and parsed[0][1][3][0] == "map" and parsed[0][1][3][1][4][0] == "dot":
+        return """( inherits ForNest(N=3) and
   inherits MatrixStore
       with {iterator[0]} as {col}
        and {iterator[1]} as {row}
@@ -421,11 +419,9 @@ def generateIDL(parsed):
        and {input1.value}   as {src1}
        and {input2.value}   as {src2}
        and {output.address} as {update_address})
-End
 """
-    elif parsed[0][0] == "map":
-        return """Constraint SPMV_CSR
-( inherits SPMV_BASE and
+    elif parsed[0][0] == "map" and parsed[0][1][4][0] == "dot":
+        return """( inherits SPMV_BASE and
   {matrix_read.idx} is the same as {inner.iterator} and
   {vector_read.idx} is the same as {index_read.value} and
   {index_read.idx}  is the same as {inner.iterator} and
@@ -434,7 +430,6 @@ End
       with {iterator} as {idx}
        and {inner.iter_begin} as {range_begin}
        and {inner.iter_end}   as {range_end})
-End
 """
     else:
         return ""
@@ -455,7 +450,9 @@ if len(sys.argv) == 2:
 
         idloutpath = filename  = "{}.idl".format(computation)
         idlstream  = open(idloutpath, "w")
+        idlstream.write("Constraint "+computation.upper()+"\n")
         idlstream.write(generateIDL(parsed))
+        idlstream.write("End\n")
 
         for harnessname,comp in harnesses:
             if computation == comp:
