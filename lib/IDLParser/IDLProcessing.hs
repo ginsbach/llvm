@@ -57,19 +57,19 @@ simplify1::Map.Map String SyntaxType->Map.Map String Int->SyntaxType->Maybe Synt
 simplify1 specs vars (PNode "specification" [PLiteral n, cont]) = do
     recursion <- simplify1 specs vars cont
     return $ PNode "specification" [PLiteral n, recursion]
-simplify1 specs vars (PNode "inheritance" [PLiteral n]) = do
+simplify1 specs vars (PNode "include" [PLiteral n]) = do
     spec <- Map.lookup n specs
     simplify1 specs vars spec
-simplify1 specs vars (PNode "inheritance" (PLiteral n:xs)) = do
+simplify1 specs vars (PNode "include" (PLiteral n:xs)) = do
     spec    <- Map.lookup n specs
     newvars <- reconfigVariables vars xs
     simplify1 specs newvars spec
-simplify1 specs vars (PNode "forall" [cont, (PLiteral s), start, end]) = do
+simplify1 specs vars (PNode "conRange" [cont, (PLiteral s), start, end]) = do
     startindex <- (evaluateCalc vars start)
     endindex   <- (evaluateCalc vars end)
     unrolled   <- sequence [simplify1 specs (Map.insert s i vars) cont | i<-[startindex..endindex-1]]
     return $ PNode "conjunction" unrolled
-simplify1 specs vars (PNode "forsome" [cont, (PLiteral s), start, end]) = do
+simplify1 specs vars (PNode "disRange" [cont, (PLiteral s), start, end]) = do
     startindex <- evaluateCalc vars start
     endindex   <- evaluateCalc vars end
     unrolled   <- sequence [simplify1 specs (Map.insert s i vars) cont | i<-[startindex..endindex-1]]

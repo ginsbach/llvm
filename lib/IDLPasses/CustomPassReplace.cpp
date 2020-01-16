@@ -47,8 +47,7 @@ bool ResearchReplacerBase::runOnModule(Module& module)
     ofs.close();
 
     ofs.open("replace-report-"+filename+".json");
-    ofs<<"{ \"filename\": \""<<(std::string)module.getName()<<"\",\n"
-         "  \"detected\": [";
+    ofs<<"{ \"filename\": \""<<(std::string)module.getName()<<"\",\n  \"detected\": [";
 
     char first_hit1 = true;
     for(Function& function : module.getFunctionList())
@@ -123,7 +122,7 @@ void replace_idiom(Function& function, Solution solution, std::string harness_na
         }
     }
 }
-
+/*
 class ResearchReplacer : public ResearchReplacerBase
 {
 public:
@@ -149,6 +148,15 @@ public:
     {"SPMV_JDS",  [](const Solution& s)->Value*{ return s["precursor"]; }, nullptr},
     {"VectorAdd", [](const Solution& s)->Value*{ return s["precursor"]; }, nullptr},
     {"VectorDot", [](const Solution& s)->Value*{ return s["precursor"]; }, nullptr}}) { }
+};
+*/
+class ResearchReplacer : public ResearchReplacerBase
+{
+public:
+    ResearchReplacer() : ResearchReplacerBase({
+    {"GEMM",             [](const Solution& s)->Value*{ return s["for"][0]["comparison"]; }, nullptr},
+    {"SPMV_CSR",         [](const Solution& s)->Value*{ return s["outer_loop"]["comparison"]; }, nullptr},
+    {"SPMV_JDS",         [](const Solution& s)->Value*{ return s["outer_loop"]["comparison"]; }, nullptr}}) { }
 };
 
 static RegisterPass<ResearchReplacer> X("research-replacer", "Research replacer", false, false);

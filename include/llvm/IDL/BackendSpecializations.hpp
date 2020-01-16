@@ -7,23 +7,37 @@
 #include <vector>
 #include <iostream>
 
-template<unsigned ... constants>
 class BackendConstantValue : public BackendSingle
 {
 public:
     BackendConstantValue() = default;
-    BackendConstantValue(const FunctionWrap& wrap);
+    BackendConstantValue(const FunctionWrap& wrap, unsigned val=UINT_MAX-1);
+};
+
+using BackendUnused = BackendConstantValue;
+
+class BackendLLVMSingleBase : public BackendSingle
+{
+public:
+    BackendLLVMSingleBase() = default;
+    BackendLLVMSingleBase(const FunctionWrap& wrap, std::function<bool(llvm::Value&)> pred);
+
+private:
+    static std::vector<unsigned> compute_hits(const FunctionWrap& wrap, std::function<bool(llvm::Value&)> pred);
 };
 
 template<typename Type>
-class BackendLLVMSingle : public BackendSingle
+class BackendLLVMSingle : public BackendLLVMSingleBase
 {
 public:
     BackendLLVMSingle() = default;
-    BackendLLVMSingle(const FunctionWrap& wrap, std::function<bool(Type&)> pred);
-
-private:
-    static std::vector<unsigned> compute_hits(const FunctionWrap& wrap, std::function<bool(Type&)> pred);
+    BackendLLVMSingle(const FunctionWrap& wrap, std::function<bool(Type&)> pred) :
+        BackendLLVMSingleBase(wrap, [pred](llvm::Value& val)->bool
+        {
+            if(auto cast_val = llvm::dyn_cast<Type>(&val))
+                return pred == nullptr || pred(*cast_val);
+            else return false;
+        }) { }
 };
 
 class BackendNotNumericConstant : public BackendLLVMSingle<llvm::Value>
@@ -55,13 +69,6 @@ public:
     BackendArgument(const FunctionWrap& wrap);
 };
 
-class BackendInstruction : public BackendLLVMSingle<llvm::Instruction>
-{
-public:
-    BackendInstruction() = default;
-    BackendInstruction(const FunctionWrap& wrap);
-};
-
 class BackendFloatZero : public BackendLLVMSingle<llvm::ConstantFP>
 {
 public:
@@ -76,13 +83,15 @@ public:
     BackendIntZero(const FunctionWrap& wrap);
 };
 
-template<unsigned op>
-class BackendOpcode : public BackendLLVMSingle<llvm::Instruction>
+class BackendOpcode : public BackendLLVMSingleBase
 {
 public:
     BackendOpcode() = default;
     BackendOpcode(const FunctionWrap& wrap);
+    BackendOpcode(const FunctionWrap& wrap, unsigned op);
 };
+
+using BackendInstruction = BackendOpcode;
 
 template<bool(llvm::Type::*predicate)() const>
 class BackendLLVMType: public BackendLLVMSingle<llvm::Value>
@@ -154,47 +163,20 @@ private:
     unsigned number_origins;
 };
 
-using BackendUnused = BackendConstantValue<UINT_MAX-1>;
-
 using BackendIntegerType = BackendLLVMType<&llvm::Type::isIntegerTy>;
 using BackendFloatType   = BackendLLVMType<&llvm::Type::isFloatTy>;
 using BackendVectorType  = BackendLLVMType<&llvm::Type::isVectorTy>;
 using BackendPointerType = BackendLLVMType<&llvm::Type::isPointerTy>;
-
-using BackendPHIInst           = BackendOpcode<llvm::Instruction::PHI>;
-using BackendStoreInst         = BackendOpcode<llvm::Instruction::Store>;
-using BackendLoadInst          = BackendOpcode<llvm::Instruction::Load>;
-using BackendReturnInst        = BackendOpcode<llvm::Instruction::Ret>;
-using BackendBranchInst        = BackendOpcode<llvm::Instruction::Br>;
-using BackendAddInst           = BackendOpcode<llvm::Instruction::Add>;
-using BackendSubInst           = BackendOpcode<llvm::Instruction::Sub>;
-using BackendMulInst           = BackendOpcode<llvm::Instruction::Mul>;
-using BackendFAddInst          = BackendOpcode<llvm::Instruction::FAdd>;
-using BackendFSubInst          = BackendOpcode<llvm::Instruction::FSub>;
-using BackendFMulInst          = BackendOpcode<llvm::Instruction::FMul>;
-using BackendFDivInst          = BackendOpcode<llvm::Instruction::FDiv>;
-using BackendBitOrInst         = BackendOpcode<llvm::Instruction::Or>;
-using BackendBitAndInst        = BackendOpcode<llvm::Instruction::And>;
-using BackendBitCastInst       = BackendOpcode<llvm::Instruction::BitCast>;
-using BackendLShiftInst        = BackendOpcode<llvm::Instruction::Shl>;
-using BackendSelectInst        = BackendOpcode<llvm::Instruction::Select>;
-using BackendSExtInst          = BackendOpcode<llvm::Instruction::SExt>;
-using BackendZExtInst          = BackendOpcode<llvm::Instruction::ZExt>;
-using BackendGEPInst           = BackendOpcode<llvm::Instruction::GetElementPtr>;
-using BackendICmpInst          = BackendOpcode<llvm::Instruction::ICmp>;
-using BackendCallInst          = BackendOpcode<llvm::Instruction::Call>;
-using BackendShufflevectorInst = BackendOpcode<llvm::Instruction::ShuffleVector>;
-using BackendInsertelementInst = BackendOpcode<llvm::Instruction::InsertElement>;
 
 using BackendSame     = BackendOrderWrap<false,true,false>;
 using BackendDistinct = BackendOrderWrap<true,false,true>;
 using BackendOrder    = BackendOrderWrap<true,false,false>;
 
 using BackendBlock    = BackendLLVMEdge<&FunctionWrap::blocks, &FunctionWrap::rblocks>;
-using BackendDFGEdge  = BackendLLVMEdge<&FunctionWrap::dfg, &FunctionWrap::rdfg>;
-using BackendCFGEdge  = BackendLLVMEdge<&FunctionWrap::cfg, &FunctionWrap::rcfg>;
-using BackendCDGEdge  = BackendLLVMEdge<&FunctionWrap::cdg, &FunctionWrap::rcdg>;
-using BackendPDGEdge  = BackendLLVMEdge<&FunctionWrap::pdg, &FunctionWrap::rpdg>;
+using BackendDFGEdge  = BackendLLVMEdge<&FunctionWrap::dfg,    &FunctionWrap::rdfg>;
+using BackendCFGEdge  = BackendLLVMEdge<&FunctionWrap::cfg,    &FunctionWrap::rcfg>;
+using BackendCDGEdge  = BackendLLVMEdge<&FunctionWrap::cdg,    &FunctionWrap::rcdg>;
+using BackendPDGEdge  = BackendLLVMEdge<&FunctionWrap::pdg,    &FunctionWrap::rpdg>;
 
 using BackendFirstOperand  = BackendLLVMOperand<0>;
 using BackendSecondOperand = BackendLLVMOperand<1>;

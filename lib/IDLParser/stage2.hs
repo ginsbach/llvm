@@ -26,6 +26,7 @@ classifyChars (x:xs)
 tokenize::[CharType]->[SyntaxType]
 tokenize [] = []
 tokenize (Special '.':Special '.':xs) = PLiteral "..":tokenize xs
+tokenize (Special '-':Special '>':xs) = PLiteral "->":tokenize xs
 tokenize (Special a:xs)               = PLiteral [a] :tokenize xs
 tokenize (Whitespace _:xs)            = tokenize xs
 tokenize (Digit a:Digit b:xs)         = case tokenize (Digit b:xs) of (PNumber n:ns) -> PNumber (a:n):ns
@@ -42,8 +43,14 @@ parse (x:xs) ys = parse xs [z|y<-ys,z<-match (x:y)]
 unbox::[[SyntaxType]]->[SyntaxType]
 unbox [x] = x
 
+filterExports::Map.Map String SyntaxType->[SyntaxType]->[SyntaxType]
+filterExports map ((PNode "specification" [PLiteral n, c]):(PNode "export" []):xs) = ((PNode "specification" [PLiteral n, (Maybe.fromJust $ Map.lookup n map)]):(filterExports map xs))
+filterExports map ((PNode "specification" x):xs) = filterExports map xs
+filterExports map [] = []
+
 collectSpecifications::[SyntaxType]->Map.Map String SyntaxType
 collectSpecifications ((PNode "specification" [PLiteral n, c]):xs) = Map.insert n c $ collectSpecifications xs
+collectSpecifications (x:xs) = collectSpecifications xs
 collectSpecifications [] = Map.empty
 
 removeInvisibles::[SyntaxType]->[SyntaxType]
@@ -59,8 +66,10 @@ prettyprint (PNumber  n)     = show $ (read::(String->Int)) n
 prettyprint (PNode str cont) = ("("++intercalate ", " (show str:map prettyprint cont)++",)")
 
 main = do
-    contents    <- getContents
-    let parsed   = parse (tokenize $ classifyChars contents) [[PNode "#" []]]
-    let cleaned  = init $ removeInvisibles $ unbox $ parsed
-    let simpler = Maybe.mapMaybe (simplify $ collectSpecifications cleaned) cleaned
-    putStrLn     $ "("++intercalate ", " (map prettyprint simpler)++")"
+    contents <- getContents
+    let parsed  = parse (tokenize $ classifyChars contents) [[PNode "#" []]]
+    let cleaned = init $ removeInvisibles $ unbox $ parsed
+    let specifs = collectSpecifications cleaned
+    let simpler = Map.mapMaybe (simplify specifs) specifs
+    let exports = filterExports simpler cleaned
+    putStrLn $ "("++intercalate ", " (map prettyprint exports)++")"

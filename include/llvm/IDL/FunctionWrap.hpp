@@ -13,6 +13,8 @@ class FunctionWrap : public std::vector<llvm::Value*>
 public:
     FunctionWrap(llvm::Function& llvm_function);
 
+    llvm::Function& function;
+
     std::vector<std::vector<unsigned>>              cfg;
     std::vector<std::vector<unsigned>>              rcfg;
     std::vector<std::vector<std::vector<unsigned>>> ocfg;

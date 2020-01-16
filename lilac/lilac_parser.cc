@@ -113,7 +113,7 @@ LiLACWhat parse_lilacwhat(string str)
     for(auto& token : tokens) {
         stack.push_back(move(token));
 
-        auto apply_rule = [&stack](string type, vector<string> rules, vector<size_t> idx, size_t keep=0) {
+        auto try_rule = [&stack](string type, vector<string> rules, vector<size_t> idx, size_t keep=0) {
             auto test_atom = [](const LiLACWhat& token, string pattern) -> bool {
                 if(pattern.front() == '=') return token.content == string(pattern.begin()+1, pattern.end());
                 size_t it = 0, it2;
@@ -137,20 +137,20 @@ LiLACWhat parse_lilacwhat(string str)
             return true;
         };
 
-        while(apply_rule("index", {"s", "[", "binop|index|s", "]"}, {0,2})
-           || apply_rule("binop", {"binop|index|s", "+|-|*", "binop|index|s", ")|]|,|+|-|*"}, {0,1,2}, 1)
-           || apply_rule("dot",   {"=sum", "(", "binop|index|s", "<", "=", "s", "<",
-                                   "binop|index|s", ")", "binop|index|s", "*", "binop|index|s", ";"}, {2,7,5,9,11})
-           || apply_rule("map",   {"=forall", "(", "binop|index|s", "<", "=", "s", "<",
-                                   "binop|index|s", ")", "{", "index", "=", "dot", "}"}, {2,7,5,10,12})
-           || apply_rule("loop",  {"=forall", "(", "binop|index|s", "<", "=", "s", "<",
-                                   "binop|index|s", ")", "{", "map", "}"}, {2,7,5,10}));
+        while(try_rule("index", {"s", "[", "binop|index|s", "]"}, {0,2})
+           || try_rule("binop", {"binop|index|s", "+|-|*", "binop|index|s", ")|]|,|+|-|*"}, {0,1,2}, 1)
+           || try_rule("dot",   {"=sum", "(", "binop|index|s", "<", "=", "s", "<",
+                                 "binop|index|s", ")", "binop|index|s", "*", "binop|index|s", ";"}, {2,7,5,9,11})
+           || try_rule("map",   {"=forall", "(", "binop|index|s", "<", "=", "s", "<",
+                                 "binop|index|s", ")", "{", "index", "=", "dot", "}"}, {2,7,5,10,12})
+           || try_rule("loop",  {"=forall", "(", "binop|index|s", "<", "=", "s", "<",
+                                 "binop|index|s", ")", "{", "map", "}"}, {2,7,5,10}));
     }
 
     if(stack.size() == 1)
         return stack[0];
 
-    string error_string = "  The final stack looks as follows:\n";
+    string error_string = "  The partially merged AST looks as follows:\n";
     for(auto entry : stack) error_string += "  "+entry.type+"\n";
     throw "Syntax error in LiLAC-What.\n"+error_string;
 }
@@ -298,22 +298,42 @@ string generate_idl(const LiLACWhat& what)
                "      with {iterator[1]} as {col}\n"
                "       and {iterator[2]} as {row}\n"
                "       and {begin} as {begin} at {input2} and\n"
-               "  inherits DotProductLoop\n"
+               "  inherits DotProductLoopAlphaBeta\n"
                "      with {for[2]}         as {loop}\n"
                "       and {input1.value}   as {src1}\n"
                "       and {input2.value}   as {src2}\n"
                "       and {output.address} as {update_address})\n";
-    else if(what.type == "map")
-        return "( inherits SPMV_BASE and\n"
-               "  {matrix_read.idx} is the same as {inner.iterator} and\n"
-               "  {vector_read.idx} is the same as {index_read.value} and\n"
-               "  {index_read.idx}  is the same as {inner.iterator} and\n"
-               "  {output.idx}      is the same as {iterator} and\n"
-               "  inherits ReadRange\n"
-               "      with {iterator} as {idx}\n"
-               "       and {inner.iter_begin} as {range_begin}\n"
-               "       and {inner.iter_end}   as {range_end})\n";
-    else return "";
+    else
+        return "( inherits For2 at {outer_loop} and\n"
+               "  inherits DotProductFor at {inner_loop} and\n"
+               "  {outer_loop.begin} strictly\n"
+               "      control flow dominates {inner_loop.begin} and\n"
+               "  {outer_loop.end} strictly\n"
+               "      control flow post dominates {inner_loop.end} and\n"
+               "  inherits VectorStore\n"
+               "      with {outer_loop}          as {scope}\n"
+               "       and {outer_loop.iterator} as {input_index}\n"
+               "                                 at {output} and\n"
+               "  inherits VectorRead\n"
+               "      with {outer_loop}          as {scope}\n"
+               "       and {inner_loop.src1}     as {value}\n"
+               "       and {inner_loop.iterator} as {input_index}\n"
+               "                                 at {val} and\n"
+               "  inherits VectorRead\n"
+               "      with {outer_loop}      as {scope}\n"
+               "       and {inner_loop.src2} as {value}\n"
+               "       and {col_ind.value}   as {input_index}\n"
+               "                             at {vector} and\n"
+               "  inherits VectorRead\n"
+               "      with {outer_loop}          as {scope}\n"
+               "       and {inner_loop.iterator} as {input_index}\n"
+               "                                 at {col_ind} and\n"
+               "  inherits ReadRanges\n"
+               "     with {outer_loop}            as {scope}\n"
+               "      and {inner_loop.iter_begin} as {range_begin}\n"
+               "      and {inner_loop.iter_end}   as {range_end}\n"
+               "      and {outer_loop.iterator}   as {input_index}\n"
+               "                                  at {read_range})\n";
 }
 
 string indent(string input, size_t n)
@@ -385,9 +405,7 @@ void parse_program(string input)
             };
 
             ofs.open(part.header[1]+".idl");
-            ofs<<"Constraint "+string_toupper(part.header[1])+"\n"
-               <<generate_idl(what)
-               <<"End\n";
+            ofs<<"Export\nConstraint "+string_toupper(part.header[1])+"\n"+generate_idl(what)+"End\n";
             ofs.close();
         }
 
