@@ -43,7 +43,7 @@ HARNESS mkl IMPLEMENTS spmv_csr
   mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE,
                   1.0, A, C, vector, 0.0, output);
 OnDemandEvaluated
-  int cols = Maximum of indir[0 .. ranges[rows]]
+  int cols = Maximum of indir[0..ranges[rows]]
 CppHeaderFiles
   #include "mkl.h"
 
