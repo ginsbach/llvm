@@ -284,7 +284,68 @@ vector<pair<string,string>> capture_arguments(const LiLACWhat& what)
 
 string generate_idl(const LiLACWhat& what)
 {
-    if(what.type == "loop")
+    if(what.type == "map" && what.child[4].type == "dot")
+    {
+        string code = "( inherits For2 at {outer_loop} and\n"
+                      "  inherits DotProductFor at {inner_loop} and\n"
+                      "  {outer_loop.begin} strictly\n"
+                      "      control flow dominates {inner_loop.begin} and\n"
+                      "  {outer_loop.end} strictly\n"
+                      "      control flow post dominates {inner_loop.end} and\n";
+
+        vector<LiLACWhat> stack{what.child[4].child[4], what.child[4].child[3], what.child[3]};
+
+        size_t                       binop_name_counter = 1;
+        vector<string>               binop_name_stack;
+        map<const LiLACWhat*,string> what_names;
+
+        auto nested_comp = [&binop_name_counter,&binop_name_stack,&what_names,&stack](const LiLACWhat& what)->string {
+            auto find_it = what_names.find(&what);
+            if(find_it != what_names.end()) return find_it->second;
+
+            string name;
+            if(what.content == "i") name = "outer_loop.iterator";
+            else if(what.content == "j") name = "inner_loop.iterator";
+            else if(what.type == "index")
+            {
+                stack.push_back(what);
+                name = what.child[0].content+".value";
+            }
+            else if(what.type == "binop")
+            {
+                stack.push_back(what);
+                name = "tmp"+string(1, '0'+binop_name_counter++);
+                binop_name_stack.push_back(name);
+                name = name+".value";
+            }
+            what_names[&what] = name;
+            return name;
+        };
+
+        for(size_t i = 1; !stack.empty(); i++) {
+            auto front = stack.back();
+            stack.pop_back();
+
+            if(front.type == "index") {
+                code = code+     "  inherits Vector"+((i==1)?"Store":"Read")+"\n"
+                                 "      with {outer_loop}      as {scope}\n";
+                if(i==2) code += "       and {inner_loop.src1} as {value}\n";
+                if(i==3) code += "       and {inner_loop.src2} as {value}\n";
+                code +=          "       and {"+nested_comp(front.child[1])+"} as {input_index}\n"
+                                 "                             at {"+front.child[0].content+"} and\n";
+            }
+        }
+
+        return code+
+               "  inherits ReadRanges\n"
+               "     with {outer_loop}            as {scope}\n"
+               "      and {inner_loop.iter_begin} as {range_begin}\n"
+               "      and {inner_loop.iter_end}   as {range_end}\n"
+               "      and {outer_loop.iterator}   as {input_index}\n"
+               "                                  at {read_range})\n";
+    }
+    else
+    {
         return "( inherits ForNest(N=3) and\n"
                "  inherits MatrixStore\n"
                "      with {iterator[0]} as {col}\n"
@@ -303,37 +364,7 @@ string generate_idl(const LiLACWhat& what)
                "       and {input1.value}   as {src1}\n"
                "       and {input2.value}   as {src2}\n"
                "       and {output.address} as {update_address})\n";
-    else
-        return "( inherits For2 at {outer_loop} and\n"
-               "  inherits DotProductFor at {inner_loop} and\n"
-               "  {outer_loop.begin} strictly\n"
-               "      control flow dominates {inner_loop.begin} and\n"
-               "  {outer_loop.end} strictly\n"
-               "      control flow post dominates {inner_loop.end} and\n"
-               "  inherits VectorStore\n"
-               "      with {outer_loop}          as {scope}\n"
-               "       and {outer_loop.iterator} as {input_index}\n"
-               "                                 at {output} and\n"
-               "  inherits VectorRead\n"
-               "      with {outer_loop}          as {scope}\n"
-               "       and {inner_loop.src1}     as {value}\n"
-               "       and {inner_loop.iterator} as {input_index}\n"
-               "                                 at {val} and\n"
-               "  inherits VectorRead\n"
-               "      with {outer_loop}      as {scope}\n"
-               "       and {inner_loop.src2} as {value}\n"
-               "       and {col_ind.value}   as {input_index}\n"
-               "                             at {vector} and\n"
-               "  inherits VectorRead\n"
-               "      with {outer_loop}          as {scope}\n"
-               "       and {inner_loop.iterator} as {input_index}\n"
-               "                                 at {col_ind} and\n"
-               "  inherits ReadRanges\n"
-               "     with {outer_loop}            as {scope}\n"
-               "      and {inner_loop.iter_begin} as {range_begin}\n"
-               "      and {inner_loop.iter_end}   as {range_end}\n"
-               "      and {outer_loop.iterator}   as {input_index}\n"
-               "                                  at {read_range})\n";
+    }
 }
 
 string indent(string input, size_t n)

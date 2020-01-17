@@ -17,7 +17,8 @@ add_library(gemm_openblas SHARED
 target_link_libraries(gemm_openblas openblas)
 
 ADD_CUSTOM_TARGET("lilac-idl"
-                  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl)
+                  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
+                  DEPENDS spmv_naive gemm_naive gemm_openblas)
 
 ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
                    COMMAND cat spmv_csr.idl gemm.idl > Idioms.idl
