@@ -91,6 +91,9 @@ struct LiLACWhat
     LiLACWhat(string t, string c): type(t), content{c} {}
     LiLACWhat(string t, vector<LiLACWhat> c): type(t), child{c} {}
 
+    bool operator==(const LiLACWhat& other) const
+        { return type == other.type && content == other.content && child == other.child; }
+
     string type;
     string content;
     vector<LiLACWhat> child;
@@ -293,56 +296,79 @@ string generate_idl(const LiLACWhat& what)
                       "  {outer_loop.end} strictly\n"
                       "      control flow post dominates {inner_loop.end} and\n";
 
-        vector<LiLACWhat> stack{what.child[4].child[4], what.child[4].child[3], what.child[3]};
+        vector<pair<LiLACWhat,int>> stack{{what.child[4].child[4],3}, {what.child[4].child[3],2}, {what.child[3],1}};
 
-        size_t                       binop_name_counter = 1;
-        vector<string>               binop_name_stack;
-        map<const LiLACWhat*,string> what_names;
+        size_t                         expr_name_counter = 1;
+        vector<string>                 expr_name_stack;
+        vector<pair<LiLACWhat,string>> what_names;
 
-        auto nested_comp = [&binop_name_counter,&binop_name_stack,&what_names,&stack](const LiLACWhat& what)->string {
-            auto find_it = what_names.find(&what);
-            if(find_it != what_names.end()) return find_it->second;
+        what_names.push_back({{"s", what.child[2].content},          "outer_loop.iterator"});
+        what_names.push_back({{"s", what.child[4].child[2].content}, "inner_loop.iterator"});
+
+        auto nested_comp = [&expr_name_counter,&expr_name_stack,&what_names,&stack](const LiLACWhat& what)->string {
+            for(const auto& prev_what : what_names)
+                if(prev_what.first == what)
+                    return prev_what.second;
 
             string name;
-            if(what.content == "i") name = "outer_loop.iterator";
-            else if(what.content == "j") name = "inner_loop.iterator";
+            if(what.type == "s")
+            {
+
+            }
             else if(what.type == "index")
             {
-                stack.push_back(what);
+                stack.push_back({what,0});
                 name = what.child[0].content+".value";
             }
             else if(what.type == "binop")
             {
-                stack.push_back(what);
-                name = "tmp"+string(1, '0'+binop_name_counter++);
-                binop_name_stack.push_back(name);
+                stack.push_back({what,0});
+                name = "tmp"+string(1, '0'+(expr_name_counter++));
+                expr_name_stack.push_back(name);
                 name = name+".value";
             }
-            what_names[&what] = name;
+
+            what_names.push_back({what, name});
             return name;
         };
 
-        for(size_t i = 1; !stack.empty(); i++) {
-            auto front = stack.back();
+        while(!stack.empty()) {
+            auto front = stack.back().first;
+            auto flags = stack.back().second;
             stack.pop_back();
 
             if(front.type == "index") {
-                code = code+     "  inherits Vector"+((i==1)?"Store":"Read")+"\n"
-                                 "      with {outer_loop}      as {scope}\n";
-                if(i==2) code += "       and {inner_loop.src1} as {value}\n";
-                if(i==3) code += "       and {inner_loop.src2} as {value}\n";
-                code +=          "       and {"+nested_comp(front.child[1])+"} as {input_index}\n"
-                                 "                             at {"+front.child[0].content+"} and\n";
+                code =       code +  "  inherits Vector"+((flags==1)?"Store":"Read")+"\n"
+                                     "      with {outer_loop}      as {scope}\n";
+                if(flags==2) code += "       and {inner_loop.src1} as {value}\n";
+                if(flags==3) code += "       and {inner_loop.src2} as {value}\n";
+                code +=              "       and {"+nested_comp(front.child[1])+"} as {input_index}\n"
+                                     "                             at {"+front.child[0].content+"} and\n";
+            }
+            else if(front.type == "binop" && front.child[1].type == "+") {
+                code = code+"  inherits Addition\n"
+                            "      with {"+nested_comp(front.child[0])+"} as {input}\n"
+                            "       and {"+nested_comp(front.child[2])+"} as {addend}\n"
+                            "                             at {"+expr_name_stack.back()+"} and\n";
+                expr_name_stack.pop_back();
             }
         }
 
-        return code+
-               "  inherits ReadRanges\n"
-               "     with {outer_loop}            as {scope}\n"
-               "      and {inner_loop.iter_begin} as {range_begin}\n"
-               "      and {inner_loop.iter_end}   as {range_end}\n"
-               "      and {outer_loop.iterator}   as {input_index}\n"
-               "                                  at {read_range})\n";
+        if(what.child[4].child[0].content == "0")
+            code += "  inherits ReadZeroRanges\n"
+                    "     with {outer_loop}            as {scope}\n"
+                    "      and {inner_loop.iter_begin} as {range_begin}\n"
+                    "      and {inner_loop.iter_end}   as {range_end}\n"
+                    "      and {outer_loop.iterator}   as {input_index}\n"
+                    "                                  at {read_range})\n";
+        else
+            code += "  inherits ReadRanges\n"
+                    "     with {outer_loop}            as {scope}\n"
+                    "      and {inner_loop.iter_begin} as {range_begin}\n"
+                    "      and {inner_loop.iter_end}   as {range_end}\n"
+                    "      and {outer_loop.iterator}   as {input_index}\n"
+                    "                                  at {read_range})\n";
+        return code;
     }
     else
     {

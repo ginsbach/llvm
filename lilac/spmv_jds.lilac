@@ -1,0 +1,5 @@
+COMPUTATION spmv_jds
+  forall(0 <= i < rows) {
+    output[perm[i]] = sum(0 <= j < nzcnt[i])
+            val[jd_ptr[j]+i] * vector[col_ind[jd_ptr[j]+i]];
+  }
