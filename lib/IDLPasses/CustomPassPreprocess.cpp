@@ -235,20 +235,25 @@ bool ResearchPreprocessor::runOnFunction(Function& function)
                 std::reverse(reverse_index_vector.begin(), reverse_index_vector.end());
 
                 auto gepinst = dyn_cast<GetElementPtrInst>(&instruction);
-                PointerType* pointertype = dyn_cast<PointerType>(innermost_gep->getPointerOperandType());
-
+                Type*  type  = innermost_gep->getPointerOperandType();
                 Value* index = ConstantInt::get(reverse_index_vector[0]->getType(), 0);
-                Type*  type  = pointertype;
 
                 std::vector<Value*> indizes;
                 std::vector<size_t> factors;
 
+                {
+                    std::string string_value;
+                    llvm::raw_string_ostream out_stream(string_value);
+                    out_stream<<*gepinst;
+                }
+
                 for(auto operand : reverse_index_vector)
                 {
-                    PointerType*    pointer_type;
-                    SequentialType* seq_type;
-                    StructType*     struct_type;
-                    ConstantInt*    struct_member;
+                    PointerType* pointer_type;
+                    VectorType*  vec_type;
+                    ArrayType*   arr_type;
+                    StructType*  struct_type;
+                    ConstantInt* struct_member;
 
                     if((pointer_type = dyn_cast<PointerType>(type)))
                     {
@@ -259,14 +264,24 @@ bool ResearchPreprocessor::runOnFunction(Function& function)
                                         data_layout.getTypeAllocSize(pointer_type->getElementType())));
                         type = pointer_type->getElementType();
                     }
-                    else if((seq_type = dyn_cast<SequentialType>(type)))
+                    else if((vec_type = dyn_cast<VectorType>(type)) &&
+                            (pointer_type = dyn_cast<PointerType>(vec_type->getElementType())))
                     {
                         index = builder.CreateAdd(
                                     index,
                                     builder.CreateMul(
                                         operand,
-                                        data_layout.getTypeAllocSize(seq_type->getElementType())));
-                        type = seq_type->getElementType();
+                                        ConstantInt::get(operand->getType(), data_layout.getTypeAllocSize(pointer_type->getElementType()))));
+                        type = vec_type->getElementType();
+                    }
+                    else if((arr_type = dyn_cast<ArrayType>(type)))
+                    {
+                        index = builder.CreateAdd(
+                                    index,
+                                    builder.CreateMul(
+                                        operand,
+                                        data_layout.getTypeAllocSize(arr_type->getElementType())));
+                        type = arr_type->getElementType();
                     }
                     else if((struct_type = dyn_cast<StructType>(type)) &&
                             (struct_member = dyn_cast<ConstantInt>(operand)))
@@ -292,7 +307,7 @@ bool ResearchPreprocessor::runOnFunction(Function& function)
                                        builder.CreateBitCast(
                                            gep_origin,
                                            Type::getInt8PtrTy(gepinst->getContext(),
-                                                              pointertype->getAddressSpace())),
+                                                              (dyn_cast<PointerType>(type)?dyn_cast<PointerType>(type)->getAddressSpace():0))),
                                        index),
                                    gepinst->getType());
 
