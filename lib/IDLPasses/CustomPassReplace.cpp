@@ -45,6 +45,8 @@ bool ResearchReplacerBase::runOnModule(Module& module)
     {
         if(!function.isDeclaration())
         {
+            if(function.getBasicBlockList().size() > 1000) continue;
+
             for(auto& idiom : idioms)
             {
                 for(auto& solution : GenerateAnalysis(std::get<0>(idiom))(function, 99))

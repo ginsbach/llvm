@@ -140,6 +140,7 @@ bool ResearchPreprocessor::runOnFunction(Function& function)
 {
     DataLayout data_layout(function.getParent());
 
+/*  I DON'T REMEMBER WHAT THIS WAS FOR ANYMORE!
     // Eliminate useless PHI nodes.
     for(BasicBlock& block : function.getBasicBlockList())
     {
@@ -168,7 +169,7 @@ bool ResearchPreprocessor::runOnFunction(Function& function)
             }
         }
     }
-
+*/
     for(BasicBlock& block : function.getBasicBlockList())
     {
         for(Instruction& instruction : block.getInstList())
@@ -334,6 +335,9 @@ bool ResearchPreprocessor::runOnFunction(Function& function)
     {
         auto comparison = dyn_cast<Instruction>((Value*)solution["comparison"]);
         auto increment  = dyn_cast<Instruction>((Value*)solution["increment"]);
+        auto iter_step  = dyn_cast<ConstantInt>((Value*)solution["iter_step"]);
+
+        if(!comparison || !increment || !iter_step || iter_step->getSExtValue() < 0) continue;
 
         comparison->setOperand(0, increment);
         comparison->setOperand(1, BinaryOperator::Create(Instruction::Add,
@@ -372,6 +376,7 @@ bool ResearchPreprocessor::runOnFunction(Function& function)
         }
     }
 
+/*  THIS IS ONLY FOR STENCILS AND TENDS TO MESS THINGS UP
     for(auto solution : GenerateAnalysis("Distributive")(function, UINT_MAX))
     {
         Instruction* sum = dyn_cast<Instruction>((Value*)solution["value"]);
@@ -467,7 +472,7 @@ bool ResearchPreprocessor::runOnFunction(Function& function)
 
             removed_instructions.insert(sum);
         }
-    }
+    }*/
 
     return false;
 }

@@ -492,8 +492,8 @@ Constraint InductionVar
 End
 
 Constraint Loop
-( inherits SESE and
-  {end} has control flow to {begin})
+( {end} has control flow to {begin} and
+  inherits SESE)
 End
 
 Constraint SESE
