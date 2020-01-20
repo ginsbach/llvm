@@ -287,110 +287,135 @@ vector<pair<string,string>> capture_arguments(const LiLACWhat& what)
 
 string generate_idl(const LiLACWhat& what)
 {
-    if(what.type == "map" && what.child[4].type == "dot")
-    {
-        string code = "( inherits For2 at {outer_loop} and\n"
-                      "  inherits DotProductFor at {inner_loop} and\n"
-                      "  {outer_loop.begin} strictly\n"
-                      "      control flow dominates {inner_loop.begin} and\n"
-                      "  {outer_loop.end} strictly\n"
-                      "      control flow post dominates {inner_loop.end} and\n";
+    vector<pair<LiLACWhat,int>> stack{{what, 0}};
 
-        vector<pair<LiLACWhat,int>> stack{{what.child[4].child[4],3}, {what.child[4].child[3],2}, {what.child[3],1}};
+    string                         code;
+    size_t                         expr_name_counter = 1;
+    vector<string>                 expr_name_stack;
+    vector<pair<LiLACWhat,string>> what_names;
+    string                         last_loop;
 
-        size_t                         expr_name_counter = 1;
-        vector<string>                 expr_name_stack;
-        vector<pair<LiLACWhat,string>> what_names;
+    auto nested_comp = [&expr_name_counter,&expr_name_stack,&what_names,&stack](const LiLACWhat& what)->string {
+        for(const auto& prev_what : what_names)
+            if(prev_what.first == what)
+                return prev_what.second;
 
-        what_names.push_back({{"s", what.child[2].content},          "outer_loop.iterator"});
-        what_names.push_back({{"s", what.child[4].child[2].content}, "inner_loop.iterator"});
+        string name;
+        if(what.type == "s")
+        {
 
-        auto nested_comp = [&expr_name_counter,&expr_name_stack,&what_names,&stack](const LiLACWhat& what)->string {
-            for(const auto& prev_what : what_names)
-                if(prev_what.first == what)
-                    return prev_what.second;
-
-            string name;
-            if(what.type == "s")
-            {
-
-            }
-            else if(what.type == "index")
-            {
-                stack.push_back({what,0});
-                name = what.child[0].content+".value";
-            }
-            else if(what.type == "binop")
-            {
-                stack.push_back({what,0});
-                name = "tmp"+string(1, '0'+(expr_name_counter++));
-                expr_name_stack.push_back(name);
-                name = name+".value";
-            }
-
-            what_names.push_back({what, name});
-            return name;
-        };
-
-        while(!stack.empty()) {
-            auto front = stack.back().first;
-            auto flags = stack.back().second;
-            stack.pop_back();
-
-            if(front.type == "index") {
-                code =       code +  "  inherits Vector"+((flags==1)?"Store":"Read")+"\n"
-                                     "      with {outer_loop}      as {scope}\n";
-                if(flags==2) code += "       and {inner_loop.src1} as {value}\n";
-                if(flags==3) code += "       and {inner_loop.src2} as {value}\n";
-                code +=              "       and {"+nested_comp(front.child[1])+"} as {input_index}\n"
-                                     "                             at {"+front.child[0].content+"} and\n";
-            }
-            else if(front.type == "binop" && front.child[1].type == "+") {
-                code = code+"  inherits Addition\n"
-                            "      with {"+nested_comp(front.child[0])+"} as {input}\n"
-                            "       and {"+nested_comp(front.child[2])+"} as {addend}\n"
-                            "                             at {"+expr_name_stack.back()+"} and\n";
-                expr_name_stack.pop_back();
-            }
+        }
+        else if(what.type == "index")
+        {
+            stack.push_back({what,0});
+            name = what.child[0].content+".value";
+        }
+        else if(what.type == "binop")
+        {
+            stack.push_back({what,0});
+            name = "tmp"+string(1, '0'+(expr_name_counter++));
+            expr_name_stack.push_back(name);
+            name = name+".value";
         }
 
-        if(what.child[4].child[0].content == "0")
-            code += "  inherits ReadZeroRanges\n"
-                    "     with {outer_loop}            as {scope}\n"
-                    "      and {inner_loop.iter_begin} as {range_begin}\n"
-                    "      and {inner_loop.iter_end}   as {range_end}\n"
-                    "      and {outer_loop.iterator}   as {input_index}\n"
-                    "                                  at {read_range})\n";
-        else
-            code += "  inherits ReadRanges\n"
-                    "     with {outer_loop}            as {scope}\n"
-                    "      and {inner_loop.iter_begin} as {range_begin}\n"
-                    "      and {inner_loop.iter_end}   as {range_end}\n"
-                    "      and {outer_loop.iterator}   as {input_index}\n"
-                    "                                  at {read_range})\n";
-        return code;
+        what_names.push_back({what, name});
+        return name;
+    };
+
+    while(!stack.empty()) {
+        auto front = stack.back().first;
+        auto flags = stack.back().second;
+        stack.pop_back();
+
+        if(what.type == "loop")
+        {
+            return "( inherits ForNest(N=3) and\n"
+                   "  inherits MatrixStore\n"
+                   "      with {iterator[0]} as {col}\n"
+                   "       and {iterator[1]} as {row}\n"
+                   "       and {begin} as {begin} at {output} and\n"
+                   "  inherits MatrixRead\n"
+                   "      with {iterator[0]} as {col}\n"
+                   "       and {iterator[2]} as {row}\n"
+                   "       and {begin} as {begin} at {input1} and\n"
+                   "  inherits MatrixRead\n"
+                   "      with {iterator[1]} as {col}\n"
+                   "       and {iterator[2]} as {row}\n"
+                   "       and {begin} as {begin} at {input2} and\n"
+                   "  inherits DotProductLoopAlphaBeta\n"
+                   "      with {for[2]}         as {loop}\n"
+                   "       and {input1.value}   as {src1}\n"
+                   "       and {input2.value}   as {src2}\n"
+                   "       and {output.address} as {update_address})";
+        }
+        else if(front.type == "map")
+        {
+            string new_loop = last_loop.empty()?"outer_loop":"map_loop";
+            code = code+(code.empty()?"( ":" and\n  ")+"inherits For2 at {"+new_loop+"}";
+            if(!last_loop.empty())
+                code += " and\n  {"+last_loop+".begin} strictly\n"
+                              "      control flow dominates {"+new_loop+".begin} and\n"
+                              "  {"+last_loop+".end} strictly\n"
+                              "      control flow post dominates {"+new_loop+".end}";
+            last_loop = new_loop;
+
+            what_names.push_back({{"s", front.child[2].content}, new_loop+".iterator"});
+
+
+
+            stack.push_back({front.child[4],0});
+            stack.push_back({front.child[3],1});
+        }
+        else if(front.type == "dot")
+        {
+            string new_loop = last_loop.empty()?"outer_loop":"dot_loop";
+            code = code+(code.empty()?"( ":" and\n  ")+"inherits DotProductFor at {"+new_loop+"}";
+            if(!last_loop.empty())
+                code += " and\n  {"+last_loop+".begin} strictly\n"
+                              "      control flow dominates {"+new_loop+".begin} and\n"
+                              "  {"+last_loop+".end} strictly\n"
+                              "      control flow post dominates {"+new_loop+".end}";
+            last_loop = new_loop;
+            what_names.push_back({{"s", front.child[2].content}, new_loop+".iterator"});
+            stack.push_back({front.child[4],3});
+            stack.push_back({front.child[3],2});
+            
+        }
+        else if(front.type == "index") {
+            code              += (code.empty()?"( ":" and\n  ");
+            code =       code +    "inherits Vector"+((flags==1)?"Store":"Read")+"\n"
+                                 "      with {outer_loop}      as {scope}\n";
+            if(flags==2) code += "       and {"+last_loop+".src1}   as {value}\n";
+            if(flags==3) code += "       and {"+last_loop+".src2}   as {value}\n";
+            code +=              "       and {"+nested_comp(front.child[1])+"} as {input_index}\n"
+                                 "                             at {"+front.child[0].content+"}";
+        }
+        else if(front.type == "binop" && front.child[1].type == "+") {
+            code              += (code.empty()?"( ":" and\n  ");
+            code = code+"inherits Addition\n"
+                      "      with {"+nested_comp(front.child[0])+"} as {input}\n"
+                      "       and {"+nested_comp(front.child[2])+"} as {addend}\n"
+                      "                             at {"+expr_name_stack.back()+"}";
+            expr_name_stack.pop_back();
+        }
     }
+
+    code += (code.empty()?"( ":" and\n  ");
+    if(what.child[4].child[0].content == "0")
+        code += "inherits ReadZeroRanges\n"
+              "      with {outer_loop}          as {scope}\n"
+              "       and {"+last_loop+".iter_begin} as {range_begin}\n"
+              "       and {"+last_loop+".iter_end}   as {range_end}\n"
+              "       and {outer_loop.iterator} as {input_index}\n"
+              "                                 at {read_range}";
     else
-    {
-        return "( inherits ForNest(N=3) and\n"
-               "  inherits MatrixStore\n"
-               "      with {iterator[0]} as {col}\n"
-               "       and {iterator[1]} as {row}\n"
-               "       and {begin} as {begin} at {output} and\n"
-               "  inherits MatrixRead\n"
-               "      with {iterator[0]} as {col}\n"
-               "       and {iterator[2]} as {row}\n"
-               "       and {begin} as {begin} at {input1} and\n"
-               "  inherits MatrixRead\n"
-               "      with {iterator[1]} as {col}\n"
-               "       and {iterator[2]} as {row}\n"
-               "       and {begin} as {begin} at {input2} and\n"
-               "  inherits DotProductLoopAlphaBeta\n"
-               "      with {for[2]}         as {loop}\n"
-               "       and {input1.value}   as {src1}\n"
-               "       and {input2.value}   as {src2}\n"
-               "       and {output.address} as {update_address})\n";
-    }
+        code += "inherits ReadRanges\n"
+              "      with {outer_loop}          as {scope}\n"
+              "       and {"+last_loop+".iter_begin} as {range_begin}\n"
+              "       and {"+last_loop+".iter_end}   as {range_end}\n"
+              "       and {outer_loop.iterator} as {input_index}\n"
+              "                                 at {read_range}";
+    return code+")";
 }
 
 string indent(string input, size_t n)
@@ -452,17 +477,36 @@ void parse_program(string input)
 
             interface_dict[part.header[1]] = args;
 
-            ofstream ofs(part.header[1]+"_naive.cc");
-            ofs<<print_harness(part.header[1], args, generate_naive_impl(what));
-            ofs.close();
-
             auto string_toupper = [](string s) ->string{
                 transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return toupper(c); });
                 return s;
             };
 
+            ofstream ofs(part.header[1]+"_interface.cc");
+            ofs<<"{\""+string_toupper(part.header[1])+"\", [](const Solution& s)->Value*{ return s[\"for\"][0][\"comparison\"]; },\n"
+                 "[](Function& function, Solution solution) {\n"
+                 "    replace_idiom(function, solution, \""+part.header[1]+"_harness\", solution[\"for\"][0][\"successor\"],\n"
+                 "                  {";
+            bool first = true;
+            for(auto& arg : args)
+            {
+                if(!first) ofs<<",\n                   ";
+                if(arg.first == "double*" || arg.first == "int*")
+                    ofs<<"solution[\""<<arg.second<<"\"][\"base_pointer\"]";
+                else
+                    ofs<<"solution[\""<<arg.second<<"\"]";
+                first = false;
+            }
+            ofs<<"},\n"
+                 "                  {solution[\"output\"][\"store\"]}); }},\n";
+            ofs.close();
+
+            ofs.open(part.header[1]+"_naive.cc");
+            ofs<<print_harness(part.header[1], args, generate_naive_impl(what));
+            ofs.close();
+
             ofs.open(part.header[1]+".idl");
-            ofs<<"Export\nConstraint "+string_toupper(part.header[1])+"\n"+generate_idl(what)+"End\n";
+            ofs<<"Export\nConstraint "+string_toupper(part.header[1])+"\n"+generate_idl(what)+"\nEnd\n";
             ofs.close();
         }
 

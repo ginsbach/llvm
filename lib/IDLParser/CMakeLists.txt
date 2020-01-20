@@ -22,6 +22,6 @@ ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/IDLParser
 
 ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/IdiomSpecifications.cpp
                    COMMAND cat ${CMAKE_CURRENT_SOURCE_DIR}/Idioms.idl ${CMAKE_BINARY_DIR}/lilac/Idioms.idl | ${CMAKE_CURRENT_BINARY_DIR}/IDLParser | pypy ${CMAKE_CURRENT_SOURCE_DIR}/stage3.py > ${CMAKE_CURRENT_BINARY_DIR}/IdiomSpecifications.cpp
-                   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/IDLParser ${CMAKE_CURRENT_SOURCE_DIR}/Idioms.idl ${CMAKE_CURRENT_SOURCE_DIR}/Idioms.idl ${CMAKE_CURRENT_SOURCE_DIR}/stage3.py
+                   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/IDLParser ${CMAKE_CURRENT_SOURCE_DIR}/Idioms.idl ${CMAKE_BINARY_DIR}/lilac/Idioms.idl ${CMAKE_CURRENT_SOURCE_DIR}/stage3.py
                    DEPENDS lilac-idl
                    COMMENT "Generate idiom specifications C++ file")
