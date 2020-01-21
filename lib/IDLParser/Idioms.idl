@@ -36,10 +36,10 @@ End
 # These are some buidling blocks for the toplevel constraints.
 
 Constraint ForNest
-( inherits For with {iterator[0]} as {iterator} at {for[0]} and
+( inherits For at {for[0]} and
   {begin} is the same as {for[0].begin} and
   {successor} is the same as {for[0].successor} and
-  ( inherits For with {iterator[i+1]} as {iterator} at {for[i+1]} and
+  ( inherits For at {for[i+1]} and
     {for[i].loop.begin} spans block to {blockend[i]} and
     ( {blockend[i]} is the same as {for[i+1].begin} or
       ( {blockend[i]} has control flow to {for[i+1].begin} and

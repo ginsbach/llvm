@@ -130,15 +130,15 @@ class ResearchReplacer : public ResearchReplacerBase
 {
 public:
     ResearchReplacer() : ResearchReplacerBase({
-    {"GEMM", [](const Solution& s)->Value*{ return s["for"][0]["comparison"]; },
+    {"GEMM", [](const Solution& s)->Value*{ return s["outer_loop"]["comparison"]; },
     [](Function& function, Solution solution) {
-        replace_idiom(function, solution, "gemm_harness", solution["for"][0]["successor"],
+        replace_idiom(function, solution, "gemm_harness", solution["outer_loop"]["successor"],
                       {solution["output"]["base_pointer"],
                        solution["input1"]["base_pointer"],
                        solution["input2"]["base_pointer"],
-                       solution["for"][0]["iter_end"],
-                       solution["for"][1]["iter_end"],
-                       solution["for"][2]["iter_end"]},
+                       solution["outer_loop"]["iter_end"],
+                       solution["outer_loop"]["iter_end"],
+                       solution["outer_loop"]["iter_end"]},
                       {solution["output"]["store"]}); }},
     {"SPMV_CSR", [](const Solution& s)->Value*{ return s["outer_loop"]["comparison"]; },
     [](Function& function, Solution solution) { //(double* output, double* matrix, double* vector, int* ranges, int* indir, int rows) {
