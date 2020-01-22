@@ -41,11 +41,11 @@ std::vector<std::vector<std::vector<unsigned>>> split_graph(const std::vector<st
 
 std::vector<std::vector<std::vector<unsigned>>> split_reverse_graph(const std::vector<std::vector<unsigned>>& graph)
 {
-    std::vector<std::vector<std::vector<unsigned>>> result;
+    std::vector<std::vector<std::vector<unsigned>>> result(4, std::vector<std::vector<unsigned>>(graph.size()));
 
     for(unsigned i = 0; i < graph.size(); i++)
     {
-        while(result.size() < graph[i].size())
+        while(result.size() <= graph[i].size())
             result.emplace_back(graph.size());
 
         for(unsigned j = 0; j < graph[i].size(); j++)
