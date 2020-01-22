@@ -30,13 +30,16 @@ public:
     static std::vector<Solution> Find(std::vector<std::pair<std::string,std::unique_ptr<SolverAtom>>> atoms,
                                       llvm::Function& function, unsigned max_solutions = UINT_MAX);
 
+    static std::vector<Solution> Error(std::string);
+
 private:
-    Solution() : single_value(nullptr) {}
+    Solution() : single_value(nullptr), error_code("null") {}
     Solution(std::vector<std::string> labels, std::vector<llvm::Value*> values);
 
     void set_precomputed_strings(std::shared_ptr<std::unordered_map<llvm::Value*,std::string>>);
 
     llvm::Value*                                                  single_value;
+    std::string                                                   error_code;
     std::vector<Solution>                                         vector_value;
     std::vector<std::pair<std::string,Solution>>                  map_value;
     std::shared_ptr<std::unordered_map<llvm::Value*,std::string>> instr_strings;

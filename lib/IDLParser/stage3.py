@@ -394,6 +394,7 @@ def generate_cpp_code(syntax_list):
                     +["IdiomSpecification(*GenerateAnalysis(std::string name))(llvm::Function&, unsigned)"]
                     +["{"]
                     +["    if(name == \""+syntax[1]+"\") return Detect"+syntax[1]+";" for syntax in syntax_list]
+                    +["    return [](llvm::Function&,unsigned){ return Solution::Error(\"\\\"Error: Idiom is not specified!\\\"\"); };"]
                     +["    return nullptr;"]
                     +["}"])
 
