@@ -72,4 +72,4 @@ main = do
     let specifs = collectSpecifications cleaned
     let simpler = Map.mapMaybe (simplify specifs) specifs
     let exports = filterExports simpler cleaned
-    putStrLn $ "("++intercalate ", " (map prettyprint exports)++")"
+    putStrLn $ "("++intercalate ", " (map prettyprint exports)++",)"
