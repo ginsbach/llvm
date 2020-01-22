@@ -4,6 +4,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/IR/ModuleSlotTracker.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include <iostream>
 #include <algorithm>
@@ -53,6 +54,13 @@ std::vector<Solution> Solution::Find(std::vector<std::pair<std::string,std::uniq
     return result;
 }
 
+std::vector<Solution> Solution::Error(std::string code)
+{
+    std::vector<Solution> result{Solution()};
+    result.front().error_code = code;
+    return result;
+}
+
 void Solution::set_precomputed_strings(std::shared_ptr<std::unordered_map<llvm::Value*,std::string>> strings)
 {
     for(auto& value : vector_value)
@@ -65,7 +73,7 @@ void Solution::set_precomputed_strings(std::shared_ptr<std::unordered_map<llvm::
 }
 
 Solution::Solution(std::vector<std::string> labels, std::vector<llvm::Value*> values)
-              : single_value(nullptr)
+              : single_value(nullptr), error_code("null")
 {
     if(labels.size() == 1 && values.size() == 1 && labels.front().empty())
     {
@@ -368,5 +376,5 @@ std::string Solution::print_json(llvm::ModuleSlotTracker& slot_tracker) const
         return escaped_string;
     }
 
-    return "null";
+    return error_code;
 }
