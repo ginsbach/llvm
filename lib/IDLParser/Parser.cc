@@ -723,7 +723,7 @@ SyntaxTree extract_constraint(SyntaxTreeBuilder in, const unordered_map<string,S
             if(vars.size() == 1)
                  processed_vars.push_back(vars.front());
             else
-                processed_vars.push_back(SyntaxTreeBuilder(vars));
+                processed_vars.push_back(SyntaxTreeBuilder("slottuple", vars));
         }
         in = SyntaxTreeBuilder("atom", {SyntaxTreeBuilder(in[0].get_type(), processed_vars)});
     }
