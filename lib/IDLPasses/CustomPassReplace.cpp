@@ -85,7 +85,15 @@ bool ResearchReplacer::runOnModule(Module& module)
                 varnames[value] = varname;
             }
 
+            std::vector<size_t> solver_order;
             for(size_t i = 0; i < wrap.size(); i++)
+                if(isa<Instruction>(wrap[i]))
+                    solver_order.push_back(i);
+            for(size_t i = 0; i < wrap.size(); i++)
+                if(!isa<Instruction>(wrap[i]))
+                    solver_order.push_back(i);
+
+            for(size_t i : solver_order)
             {
                 std::string string_value;
                 llvm::raw_string_ostream out_stream(string_value);
