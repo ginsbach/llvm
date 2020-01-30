@@ -42,7 +42,7 @@ bool ResearchReplacer::runOnModule(Module& module)
     {
         if(!function.isDeclaration())
         {
-            ofs<<(first_hit1?"":"\n")<<"Constraint ";
+            ofs<<(first_hit1?"":"\n")<<"Export Constraint ";
             for(char c : (std::string)function.getName())
                 ofs<<((isalpha(c) || isdigit(c))?c:'_');
             ofs<<"\n(";
