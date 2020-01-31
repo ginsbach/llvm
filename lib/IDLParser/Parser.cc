@@ -1,3 +1,12 @@
+// This program receives two filenames as command line arguments.
+// The first argument is the filename of a grammar specification in Backus-Naur
+// form. The second argument is the filename of a program adhering to that
+// specification.
+// The output of this program is a rendering of the parsed input from the second
+// input file. 
+
+double stopped_time;
+
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -12,14 +21,6 @@
 
 using namespace std;
 
-/* This program receives two arguments.
-   The first argument is the filename of a grammar specification in Backus-Naur
-   form. The second argument is the filename of a program adhering to that
-   specification.
-   The output of this program is then a rendering of the parsed input from the
-   second input file.
-*/
-
 // This class implements a language-independent syntax tree. As a conscious
 // design decision, the "leaf_value" field is _not_ reused to store the
 // value returned by get_type(), although this might seem convenient at first.
@@ -31,12 +32,15 @@ public:
 
     bool operator!=(const SyntaxTree& t) const;
 
-    bool isleaf(const string& s={}) const { return !leaf_value.empty() && (s.empty() || leaf_value == s); }
-    bool isnode(const string& s={}) const { return !node_value.empty() && (s.empty() || get_type() == s); }
-    const string&     get_leaf  ()                   const { return leaf_value; }
-    const string&     get_type  ()                   const { return node_value[0].get_leaf(); }
-    size_t            size      ()                   const { return node_value.empty()?0:(node_value.size()-1); }
-    const SyntaxTree& operator[](size_t i)           const { return node_value[i+1]; }
+    bool               isleaf()                const { return node_value.empty(); }
+    bool               isleaf(const string& s) const { return node_value.empty() && leaf_value == s; }
+    bool               isnode()                const { return !node_value.empty(); }
+    bool               isnode(const string& s) const { return !node_value.empty() && get_type() == s; }
+    const string&      get_leaf()              const { return leaf_value; }
+    const string&      get_type()              const { return node_value[0].get_leaf(); }
+    size_t             size    ()              const { return node_value.empty()?0:(node_value.size()-1); }
+    vector<SyntaxTree> children()              &&;
+    const SyntaxTree&  operator[](size_t i)    const { return node_value[i+1]; }
 
 private:
     string             leaf_value;
@@ -45,7 +49,7 @@ private:
     friend ostream& operator<<(ostream& ostr, const vector<SyntaxTree>& x);
 };
 
-// This function implements a generic parser using a Backus-Naur Form language
+// This function implements a generic parser using a Backus-Naur form language
 // specification that is provided as a string.
 static vector<SyntaxTree> Parse(string bnf_specification, string program_code);
 
@@ -56,10 +60,11 @@ vector<SyntaxTree> ProcessIDLSpecs(const vector<SyntaxTree>& in_vector);
 // This formats the IDL specifications for further processing and codegen.
 ostream& operator<<(ostream& ostr, const vector<SyntaxTree>& x);
 
-double stopped_time;
-// The program is straightforward: The program is language specification and
-// program code are read, the IDL is parsed, and specifications are extracted
-// and output to cout.
+// The main function is straightforward:
+// First, the program is language specification and program code are read.
+// Second the code is parsed according to the langauge specification.
+// Finally, the iDL specifications are extracted from the parsed syntax and
+// output to the standard output stream.
 int main(int argc, char** argv)
 {
     try
@@ -134,7 +139,7 @@ public:
 };
 
 // This class stores the non-deterministic transition rules that are extracted
-// from the Backus-Naur Form langauge specification in the single constructor.
+// from the Backus-Naur form langauge specification in the single constructor.
 class GrammarRules
 {
 public:
@@ -175,41 +180,36 @@ vector<SyntaxTree> Parse(string bnf_specification, string program_code)
     auto grammar_rules = GrammarRules(bnf_specification);
 
     vector<shared_ptr<ParseBranch>> syntax_branches{nullptr};
+    vector<ParseBranch>             branch_workset;
+    vector<ParseBranch>             next_branch_workset;
+
     for(auto& token : tokens)
     {
-        for(size_t i = 0; i < syntax_branches.size(); i++)
-            syntax_branches[i] = make_shared<ParseBranch>(ParseBranch{SyntaxTree(token), syntax_branches[i]});
+        branch_workset.clear();
+        for(auto& branch : syntax_branches)
+            branch_workset.push_back(ParseBranch(SyntaxTree(token), move(branch)));
 
-        vector<shared_ptr<ParseBranch>> next_branch_workset;
-        vector<shared_ptr<ParseBranch>> branch_workset = move(syntax_branches);
         syntax_branches.clear();
-
         while(!branch_workset.empty())
         {
+            next_branch_workset.clear();
             for(auto& branch : branch_workset)
             {
                 auto tmp1 = clock();
 
                 for(const auto& rule : grammar_rules.transition_rules)
-                    if(auto result = rule(*branch))
-                        next_branch_workset.push_back(result);
+                    if(auto result = rule(branch))
+                        next_branch_workset.push_back(*result);
 
                 auto tmp2 = clock();
                 stopped_time += (double)(tmp2-tmp1)/(double)CLOCKS_PER_SEC;
 
-                if(grammar_rules.retention_rule(*branch))
-                {
-                    bool previous = false;
-                    for(const auto& prev_branch : syntax_branches)
-                    {
-                        if(*branch == *prev_branch){ previous = true; break; }
-                    }
-                    if(!previous) syntax_branches.push_back(branch);
-                }
+                if(grammar_rules.retention_rule(branch) && !any_of(syntax_branches.begin(), syntax_branches.end(),
+                                                                   [&branch](const auto& b) { return *b == branch; }))
+                    syntax_branches.push_back(shared_ptr<ParseBranch>(new ParseBranch(move(branch))));
             }
 
-            branch_workset = move(next_branch_workset);
-            next_branch_workset.clear();
+            swap(branch_workset, next_branch_workset);
         }
         if(syntax_branches.empty()) break;
     }
@@ -228,7 +228,8 @@ bool ParseBranch::operator==(const ParseBranch& o) const
 }
 
 // This is the obvious deep comparison operator using recursive calls.
-bool SyntaxTree::operator!=(const SyntaxTree& t) const {
+bool SyntaxTree::operator!=(const SyntaxTree& t) const
+{
     if(isleaf())  return !t.isleaf(get_leaf());
     if(!isnode()) return t.isleaf() || t.isnode();
     if(!t.isnode(get_type()) || size() != t.size()) return true;
@@ -261,53 +262,15 @@ ParseBranch::operator vector<SyntaxTree>() &&
     return trees;
 }
 
-struct BNFSyntax
-{
-    static vector<pair<string,BNFSyntax>> Parse(string input);
-
-    static BNFSyntax Special  (string s)                         { return BNFSyntax{ s, {}, {}, {}, {}, {}, {}, {}}; }
-    static BNFSyntax Literal  (string l)                         { return BNFSyntax{{},  l, {}, {}, {}, {}, {}, {}}; }
-    static BNFSyntax Reference(string r)                         { return BNFSyntax{{}, {},  r, {}, {}, {}, {}, {}}; }
-    static BNFSyntax Sequence (vector<BNFSyntax> s)              { return BNFSyntax{{}, {}, {},  s, {}, {}, {}, {}}; }
-    static BNFSyntax Choice   (vector<BNFSyntax> c)              { return BNFSyntax{{}, {}, {}, {},  c, {}, {}, {}}; }
-    static BNFSyntax Optional (vector<BNFSyntax> o)              { return BNFSyntax{{}, {}, {}, {}, {},  o, {}, {}}; }
-    static BNFSyntax Repeat   (vector<BNFSyntax> r)              { return BNFSyntax{{}, {}, {}, {}, {}, {},  r, {}}; }
-    static BNFSyntax Bound    (vector<pair<string,BNFSyntax>> v) { return BNFSyntax{{}, {}, {}, {}, {}, {}, {},  v}; }
-
-    static BNFSyntax RefChoice(vector<string> v)
-    {
-        BNFSyntax res;
-        for(auto s : v) res.choice.push_back(Reference(s));
-        if(res.choice.size() == 1) return res.choice.front();
-        else                       return res;
-    }
-
-    bool operator==(const string& s) const { return s == special || s == "\'"+literal+"\'" || s == "<"+reference+">"; }
-    bool isnormal()                  const { return special.empty(); }
-    bool isliteral()                 const { return !literal.empty(); }
-    bool isreference()               const { return !reference.empty(); }
-    bool issequence()                const { return !sequence.empty(); }
-    bool ischoice()                  const { return !choice.empty(); }
-    bool isoptional()                const { return !optional.empty(); }
-    bool isrepeat()                  const { return !repeat.empty(); }
-    bool isbound()                   const { return !bound.empty(); }
-
-    string                         special;
-    string                         literal;
-    string                         reference;
-    vector<BNFSyntax>              sequence;
-    vector<BNFSyntax>              choice;
-    vector<BNFSyntax>              optional;
-    vector<BNFSyntax>              repeat;
-    vector<pair<string,BNFSyntax>> bound;
-};
+// This function parses the Backus-Naur form language specification.
+vector<pair<string,SyntaxTree>> ParseBNF(string bnf_specification);
 
 // This is a workaround to allow building without enabling C++20 in the compiler.
 template<typename T> bool contains(const unordered_set<T>& S, const T& E) { return S.find(E) != S.end(); }
 
 GrammarRules::GrammarRules(string bnf_specification)
 {
-    auto stack = BNFSyntax::Parse(bnf_specification);
+    auto stack = ParseBNF(bnf_specification);
 
     auto get_temp = [](string in, int i)->string{ stringstream sstr; sstr<<in<<"@"<<i; return sstr.str(); };
 
@@ -315,108 +278,123 @@ GrammarRules::GrammarRules(string bnf_specification)
     unordered_set<string> types_with_unref_continue;
     vector<function<shared_ptr<ParseBranch>(const ParseBranch&)>> rules;
 
-    for(size_t j = 0; j < stack.size(); j++) {
-        if(!stack[j].first.empty())
+    while(!stack.empty())
+    {
+        auto l = move(stack.back().first);
+        auto r = move(stack.back().second);
+        stack.pop_back();
+
+        if(r.isnode("literal"))
+            rules.push_back([l,s=r[0].get_leaf()](const ParseBranch& b) { return b.literal_rule(l, s); });
+        else if(r.isnode("reference") && r[0].isleaf("s"))
+            rules.push_back([l](const ParseBranch& b) { return b.string_rule (l); });
+        else if(r.isnode("reference") && r[0].isleaf("n"))
+            rules.push_back([l](const ParseBranch& b) { return b.number_rule (l); });
+        else if(r.isnode("reference"))
+            rules.push_back([l,s=r[0].get_leaf()](const ParseBranch& b) { return b.reference_rule(l, s); });
+        else if(r.isnode("choice"))
+            for(auto& choice : move(r).children()) stack.push_back({l, choice});
+        else if(r.isnode("sequence"))
         {
-            auto l = move(stack[j].first);
-            auto r = move(stack[j].second);
+            unordered_set<string> old_tmps;
+            string                tmp = get_temp(l, 0);
 
-            if(r.isliteral())
-                rules.push_back([=](const ParseBranch& branch) { return branch.literal_rule(l, r.literal); });
-            else if(r == "<s>")
-                rules.push_back([=](const ParseBranch& branch) { return branch.string_rule (l); });
-            else if(r == "<n>")
-                rules.push_back([=](const ParseBranch& branch) { return branch.number_rule (l); });
-            else if(r.isreference())
-                rules.push_back([=](const ParseBranch& branch) { return branch.reference_rule(l, r.reference); });
-            else if(r.ischoice())    for(auto& choice : r.choice) stack.push_back({l, choice});
-            else if(r.issequence())
+            auto tail = move(r).children();
+            auto head = move(tail.front());
+            tail.erase(tail.begin());
+
+            if(head.isnode("literal"))
+                rules.push_back([l=tmp,s=head[0].get_leaf()](const ParseBranch& b) { return b.literal_rule(l, s); });
+            else if(head.isnode("reference"))
+                tmp = head[0].get_leaf();
+            else if(head.isnode("choice"))
             {
-                vector<string> old_tmps{get_temp(l, 0)};
-
-                if(r.sequence[0].isliteral())
-                    rules.push_back([=](const ParseBranch& branch) { return branch.literal_rule(old_tmps.front(), r.sequence[0].literal); });
-                else if(r.sequence[0].isreference())
-                    old_tmps.front() = r.sequence[0].reference;
-                else if(r.sequence[0].ischoice())
-                {
-                    for(auto& choice : r.sequence[0].choice)
-                        if(choice.isreference()) old_tmps.push_back(choice.reference);
-                        else                     stack.push_back({old_tmps.front(), choice});
-                }
-                else throw string("Syntax Error in BNF file: Sequence rule has invalid initial part.");
-
-                for(size_t i = 1; i < r.sequence.size(); i++)
-                {
-                    vector<string> new_tmps;
-
-                    if(r.sequence[i].ischoice())
-                    {
-                        string tmp = (i+1 < r.sequence.size())?get_temp(l, i):l;
-                        new_tmps.assign({tmp});
-
-                        for(auto& choice : r.choice)
-                        {
-                            if(!choice.issequence()) choice = BNFSyntax::Sequence({choice});
-                            choice.sequence.insert(choice.sequence.begin(), BNFSyntax::RefChoice(old_tmps));
-                            stack.push_back({tmp, move(choice)});
-                        }
-                    }
-                    else if(r.sequence[i].isoptional() || r.sequence[i].isrepeat())
-                    {
-                        string tmp = (i+1 < r.sequence.size())?get_temp(l, i):l;
-                        new_tmps.assign({tmp});
-
-                        if(r.sequence[i].isrepeat()) {
-                            old_tmps.push_back(tmp);
-                        }
-
-                        auto news2 = BNFSyntax::Sequence({BNFSyntax::RefChoice(old_tmps)});
-
-                        if(r.sequence[i].isoptional())
-                            news2.sequence.insert(news2.sequence.end(), r.sequence[i].optional.begin(), r.sequence[i].optional.end());
-
-                        if(r.sequence[i].isrepeat())
-                            news2.sequence.insert(news2.sequence.end(), r.sequence[i].repeat.begin(), r.sequence[i].repeat.end());
-
-                        stack.push_back({tmp, news2});
-
-                        if(r.sequence[i].isoptional())
-                            new_tmps.insert(new_tmps.end(), old_tmps.begin(), old_tmps.end());
-                        else new_tmps = old_tmps;
-                    }
-                    else
-                    {
-                        string tmp = (i+1 < r.sequence.size())?get_temp(l, i):l;
-                        new_tmps.assign({tmp});
-
-                        if(r.sequence[i].isliteral()) {
-                            rules.push_back([=](const ParseBranch& branch) { return branch.add_literal_rule(tmp, {old_tmps.begin(), old_tmps.end()}, r.sequence[i].literal); });
-                            types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
-                        }
-                        else if(r.sequence[i] == "<s>") {
-                            rules.push_back([=](const ParseBranch& branch) { return branch.add_string_rule(tmp, {old_tmps.begin(), old_tmps.end()}); });
-                            types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
-                        }
-                        else if(r.sequence[i] == "<n>") {
-                            rules.push_back([=](const ParseBranch& branch) { return branch.add_number_rule(tmp, {old_tmps.begin(), old_tmps.end()}); });
-                            types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
-                        }
-                        else if(r.sequence[i].isreference()) {
-                            rules.push_back([=](const ParseBranch& branch) { return branch.add_reference_rule(tmp, {old_tmps.begin(), old_tmps.end()}, r.sequence[i].reference); });
-                            types_with_ref_continue.insert(old_tmps.begin(), old_tmps.end());
-                        }
-                        else throw string("Failed to process BNF file, some sequence rule cannot be dissected fully.");
-                    }
-
-                    old_tmps = new_tmps;
-                }
-                for(auto old_tmp : old_tmps)
-                    if(old_tmp != l)
-                        rules.push_back([=](const ParseBranch& branch) { return branch.reference_rule(l, old_tmp); });
+                for(auto& choice : move(head).children())
+                    if(choice.isnode("reference")) old_tmps.insert(choice[0].get_leaf());
+                    else                           stack.push_back({tmp, move(choice)});
             }
-            else throw string("Syntax Error in BNF file: No decomposition to break down complex rule.");
+            else throw string("Syntax Error in BNF file: Sequence rule has invalid initial part.");
+
+            old_tmps.insert(tmp);
+            for(size_t i = 0; i < tail.size(); i++)
+            {
+                unordered_set<string> new_tmps;
+
+                if(tail[i].isnode("choice"))
+                {
+                    string tmp = (i+1 < tail.size())?get_temp(l, i+1):l;
+                    new_tmps.insert(tmp);
+
+                    for(size_t k = 0; k < tail[i].size(); k++)
+                    {
+                        vector<SyntaxTree> refchoice_contents;
+                        for(const auto& old_tmp : old_tmps)
+                            refchoice_contents.push_back(SyntaxTree("reference", {SyntaxTree(old_tmp)}));
+
+                        vector<SyntaxTree> sequence_contents{SyntaxTree("choice", refchoice_contents)};
+    
+                        if(tail[i][k].isnode("sequence"))
+                            for(size_t l = 0; l < tail[i][k].size(); l++)
+                                sequence_contents.push_back(tail[i][k][l]);
+
+                        stack.push_back({tmp,SyntaxTree("sequence", sequence_contents)});
+                    }
+                }
+                else if(tail[i].isnode("optional") || tail[i].isnode("repeat"))
+                {
+                    string tmp = (i+1 < tail.size())?get_temp(l, i+1):l;
+                    new_tmps.insert(tmp);
+
+                    if(tail[i].isnode("repeat")) {
+                        old_tmps.insert(tmp);
+                    }
+
+                    vector<SyntaxTree> refchoice_contents;
+                    for(const auto& old_tmp : old_tmps)
+                        refchoice_contents.push_back(SyntaxTree("reference", {SyntaxTree(old_tmp)}));
+
+                    vector<SyntaxTree> news2_content{SyntaxTree("choice", refchoice_contents)};
+
+                    for(size_t k = 0; k < tail[i].size(); k++)
+                        news2_content.push_back(tail[i][k]);
+
+                    stack.push_back({tmp, SyntaxTree("sequence", news2_content)});
+
+                    if(tail[i].isnode("optional"))
+                        new_tmps.insert(old_tmps.begin(), old_tmps.end());
+                    else new_tmps = old_tmps;
+                }
+                else
+                {
+                    string tmp = (i+1 < tail.size())?get_temp(l, i+1):l;
+                    new_tmps.insert(tmp);
+
+                    if(tail[i].isnode("literal")) {
+                        rules.push_back([=](const ParseBranch& branch) { return branch.add_literal_rule(tmp, old_tmps, tail[i][0].get_leaf()); });
+                        types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
+                    }
+                    else if(tail[i].isnode("reference") && tail[i][0].isleaf("s")) {
+                        rules.push_back([=](const ParseBranch& branch) { return branch.add_string_rule(tmp, old_tmps); });
+                        types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
+                    }
+                    else if(tail[i].isnode("reference") && tail[i][0].isleaf("n")) {
+                        rules.push_back([=](const ParseBranch& branch) { return branch.add_number_rule(tmp, old_tmps); });
+                        types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
+                    }
+                    else if(tail[i].isnode("reference")) {
+                        rules.push_back([=](const ParseBranch& branch) { return branch.add_reference_rule(tmp, old_tmps, tail[i][0].get_leaf()); });
+                        types_with_ref_continue.insert(old_tmps.begin(), old_tmps.end());
+                    }
+                    else throw string("Failed to process BNF file, some sequence rule cannot be dissected fully.");
+                }
+
+                old_tmps = new_tmps;
+            }
+            for(auto old_tmp : old_tmps)
+                if(old_tmp != l)
+                    rules.push_back([=](const ParseBranch& branch) { return branch.reference_rule(l, old_tmp); });
         }
+        else throw string("Syntax Error in BNF file: No decomposition to break down complex rule.");
     }
 
     swap(transition_rules, rules);
@@ -459,6 +437,14 @@ SyntaxTree::SyntaxTree(string l, vector<SyntaxTree> n) : node_value(n)
     }
 
     node_value.insert(node_value.begin(), SyntaxTree(l));
+}
+
+// This gives a way to move out the children without copies.
+vector<SyntaxTree> SyntaxTree::children() &&
+{
+    if(!node_value.empty())
+        node_value.erase(node_value.begin());
+    return move(node_value);
 }
 
 shared_ptr<ParseBranch> ParseBranch::literal_rule(const string& n, const string& match) const
@@ -517,96 +503,82 @@ shared_ptr<ParseBranch> ParseBranch::add_number_rule(const string& n, const unor
     else return nullptr;
 }
 
-// This function parses the Backus-Naur Form language specification. As opposed
-// the actual parser that the resulting grammar is informing, this is hardcoded.
-vector<pair<string,BNFSyntax>> BNFSyntax::Parse(string input)
+// This function parses the Backus-Naur form language specification. Different to
+// the actual parser that the resulting grammar is informing, this is a hardcoded
+// deterministic LALR(2) parser.
+// The input has to be fairly well structured. In particular, all tokens have to
+// be separated by whitespace, as the lexer is very primitive.
+vector<pair<string,SyntaxTree>> ParseBNF(string bnf_specification)
 {
     vector<string> tokens{""};
-    for(auto c : input)
+    for(auto c : bnf_specification + " ) )")
     {
         if(isspace(c) && !tokens.back().empty()) tokens.push_back("");
         if(!isspace(c)) tokens.back().push_back(c);
     }
     if(tokens.back().empty()) tokens.pop_back();
-    tokens.push_back(")");
-    tokens.push_back(")");
 
-    vector<BNFSyntax> stack;
+    vector<SyntaxTree>              stack;
+    vector<pair<string,SyntaxTree>> result;
     for(const auto& t : tokens)
     {
         if(t == "::=" || t == "|" || t == "[" || t == "]" || t == "{" || t == "}" || t == "(" || t == ")" || t == "!")
-            stack.push_back(BNFSyntax::Special(t));
+            stack.push_back(SyntaxTree(t));
         else if(t.front() == '<' && t.back() == '>')
-            stack.push_back(BNFSyntax::Reference(string(t.begin()+1, t.end()-1)));
+            stack.push_back(SyntaxTree("reference", {SyntaxTree(string(t.begin()+1, t.end()-1))}));
         else if(t.front() == '\'' && t.back() == '\'' && t.size() >= 2)
-            stack.push_back(BNFSyntax::Literal(string(t.begin()+1, t.end()-1)));
-        else stack.push_back(BNFSyntax::Literal(t));
+            stack.push_back(SyntaxTree("literal", {SyntaxTree(string(t.begin()+1, t.end()-1))}));
+        else stack.push_back(SyntaxTree("literal", {SyntaxTree(t)}));
 
         while(true)
         {
-            auto get   = [&stack](size_t n)->BNFSyntax&{ return stack.rbegin()[n]; };
-            auto merge = [&stack](size_t n)            { stack.erase(stack.end()-n-1, stack.end()-2); };
-            if(stack.size() >= 4 && get(3).isnormal() && get(2).isnormal() && !(get(1) == "::="))
-            {
-                if(get(3).issequence()) get(3).sequence.push_back(get(2));
-                else                    get(3) = BNFSyntax::Sequence({move(get(3)), move(get(2))});
-                merge(2);
-            }
-            else if(stack.size() >= 5 && get(4).isnormal() && get(3) == "|" && get(2).isnormal() &&
-                   (get(1) == "|" || get(1) == ")" || get(1) == "]" || get(1) == "}" || get(0) == "::="))
-            {
-                if(get(4).ischoice()) get(4).choice.push_back(get(2));
-                else                  get(4) = BNFSyntax::Choice({get(4), get(2)});
-                merge(3);
-            }
-            else if(stack.size() >= 5 && get(4) == "(" && get(3).isnormal() && get(2) == ")")
-            {
-                get(4) = move(get(3));
-                merge(3);
-            }
-            else if(stack.size() >= 5 && get(4) == "[" && get(3).isnormal() && get(2) == "]")
-            {
-                if(get(3).issequence()) get(4) = BNFSyntax::Optional(move(get(3).sequence));
-                else                    get(4) = BNFSyntax::Optional({move(get(3))});
-                merge(3);
-            }
-            else if(stack.size() >= 5 && get(4) == "{" && get(3).isnormal() && get(2) == "}")
-            {
-                if(get(3).issequence()) get(4) = BNFSyntax::Repeat(move(get(3).sequence));
-                else                    get(4) = BNFSyntax::Repeat({move(get(3))});
-                merge(3);
-            }
-            else if(stack.size() >= 6 && get(4).isliteral() && get(3) == "::=" && get(2).isnormal() &&
-                   ((get(1) == ")" && get(0) == ")") || (get(1).isliteral() && get(0) == "::=")) && get(5).isbound())
-            {
-                get(5).bound.push_back({move(get(4).literal), move(get(2))});
-                merge(4);
+            auto len = [&s=stack](size_t n)->bool             { return s.size() >= n; };
+            auto get = [&s=stack](size_t n)->const SyntaxTree&{ return s.rbegin()[n]; };
+            auto mov = [&s=stack](size_t n)->SyntaxTree       { return move(s.rbegin()[n]); };
+            auto set = [&s=stack](size_t n, SyntaxTree t)     { s.rbegin()[n] = t; s.erase(s.end()-n, s.end()-2); };
+            auto add = [get,mov] (size_t n1, size_t n2)->auto {
+                auto name = get(n1).get_type();
+                auto vect = mov(n1).children();
+                vect.push_back(mov(n2));
+                return SyntaxTree(name, vect);
+            };
 
-            }
-            else if(stack.size() >= 5 && get(4).isliteral() && get(3) == "::=" && get(2).isnormal() &&
-                   ((get(1) == ")" && get(0) == ")") || (get(1).isliteral() && get(0) == "::=")))
+            if(len(4) && get(3).isnode() && get(2).isnode() && !get(1).isleaf("::="))
             {
-                get(4) = BNFSyntax::Bound({{move(get(4).literal), move(get(2))}});
-                merge(3);
+                set(3, get(3).isnode("sequence")?add(3, 2):SyntaxTree("sequence", {move(get(3)), move(get(2))}));
             }
-            else if(stack.size() == 3 && get(2).isbound() && get(1) == ")" && get(0) == ")")
-                return get(2).bound;
+            else if(len(5) && get(4).isnode() && get(3).isleaf("|") && get(2).isnode() && (get(0).isleaf("::=") ||
+                    get(1).isleaf("|") || get(1).isleaf(")") || get(1).isleaf("]") || get(1).isleaf("}")))
+            {
+                set(4, get(4).isnode("choice")?add(4, 2):SyntaxTree("choice", {mov(4), mov(2)}));
+            }
+            else if(len(5) && get(4).isleaf("(") && get(3).isnode() && get(2).isleaf(")"))
+            {
+                set(4, mov(3));
+            }
+            else if(len(5) && get(4).isleaf("[") && get(3).isnode() && get(2).isleaf("]"))
+            {
+                set(4, SyntaxTree("optional", get(3).isnode("sequence")?mov(3).children():vector<SyntaxTree>{mov(3)}));
+            }
+            else if(len(5) && get(4).isleaf("{") && get(3).isnode() && get(2).isleaf("}"))
+            {
+                set(4, SyntaxTree("repeat", get(3).isnode("sequence")?mov(3).children():vector<SyntaxTree>{mov(3)}));
+            }
+            else if(len(5) && get(4).isnode("literal") && get(3).isleaf("::=") && get(2).isnode() &&
+                   ((get(1).isleaf(")") && get(0).isleaf(")")) || (get(1).isnode("literal") && get(0).isleaf("::="))))
+            {
+                result.push_back({get(4)[0].get_leaf(), mov(2)});
+                stack.erase(stack.end()-5, stack.end()-2);
+            }
+            else if(stack.size() == 2 && get(1).isleaf(")") && get(0).isleaf(")"))
+                return result;
             else break;
         }
     }
 
-    string error_msg = "Failed to parse BNF file, as not all syntax collapsed to transformation rules.\n    [";
-    for(const auto& s: stack)
-    {
-        if(!s.isnormal() || s.isliteral() || s.isreference())
-            error_msg += "\""+s.special+s.literal+s.reference+"\", ";
-        else if(s.ischoice())   error_msg += "<choice>, ";
-        else if(s.isoptional()) error_msg += "<optional>, ";
-        else if(s.isrepeat())   error_msg += "<repeat>, ";
-        else                    error_msg += "<"+string(s.bound.size(), '.')+">";
-    }
-    error_msg.resize(error_msg.size()-2);
-    throw string(error_msg+"]");
+    stringstream sstr;
+    sstr<<"Failed to parse BNF file, as not all syntax collapsed to transformation rules.\n    "<<stack<<"\n";
+    throw sstr.str();
 }
 
 /* This part is IDL specific */
