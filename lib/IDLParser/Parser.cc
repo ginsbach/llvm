@@ -258,6 +258,10 @@ vector<SyntaxTree> SyntaxTreeBuilder::Parse(string bnf_code, string program_code
     throw string("Parsing was ambivalent.");
 }
 
+// This is a workaround to allow building without C++20 enabled for compatibility.
+template<typename T>
+bool contains(const unordered_set<T>& S, const T& E) { return S.find(E) != S.end(); }
+
 shared_ptr<SyntaxTreeBranch> SyntaxTreeBranch::literal_rule(const string& n, const string& match) const
 {
     if(isleaf(match))
@@ -288,28 +292,28 @@ shared_ptr<SyntaxTreeBranch> SyntaxTreeBranch::number_rule(const string& n) cons
 
 shared_ptr<SyntaxTreeBranch> SyntaxTreeBranch::add_literal_rule(const string& n, const unordered_set<string>& prev, const string& match) const
 {
-    if(tail && tail->isnode() && prev.contains(tail->get_type()) && isleaf(match))
+    if(tail && tail->isnode() && contains(prev, tail->get_type()) && isleaf(match))
         return make_shared<SyntaxTreeBranch>(SyntaxTreeBuilder(n, {*tail}).flatten(), tail->tail);
     else return nullptr;
 }
 
 shared_ptr<SyntaxTreeBranch> SyntaxTreeBranch::add_reference_rule(const string& n, const unordered_set<string>& prev, const string& match) const
 {
-    if(tail && tail->isnode() && prev.contains(tail->get_type()) && isnode(match))
+    if(tail && tail->isnode() && contains(prev, tail->get_type()) && isnode(match))
         return make_shared<SyntaxTreeBranch>(SyntaxTreeBuilder(n, {*tail, *this}).flatten(), tail->tail);
     else return nullptr;
 }
 
 shared_ptr<SyntaxTreeBranch> SyntaxTreeBranch::add_string_rule(const string& n, const unordered_set<string>& prev) const
 {
-    if(tail && tail->isnode() && prev.contains(tail->get_type()) && isleaf() && !isdigit(get_leaf()[0]))
+    if(tail && tail->isnode() && contains(prev, tail->get_type()) && isleaf() && !isdigit(get_leaf()[0]))
         return make_shared<SyntaxTreeBranch>(SyntaxTreeBuilder(n, {*tail, *this}).flatten(), tail->tail);
     else return nullptr;
 }
 
 shared_ptr<SyntaxTreeBranch> SyntaxTreeBranch::add_number_rule(const string& n, const unordered_set<string>& prev) const
 {
-    if(tail && tail->isnode() && prev.contains(tail->get_type()) && isleaf() && isdigit(get_leaf()[0]))
+    if(tail && tail->isnode() && contains(prev, tail->get_type()) && isleaf() && isdigit(get_leaf()[0]))
         return make_shared<SyntaxTreeBranch>(SyntaxTreeBuilder(n, {*tail, *this}).flatten(), tail->tail);
     else return nullptr;
 }
@@ -498,12 +502,12 @@ GrammarRules GrammarRules::FromBNFSpecification(string input)
 
     result.keep_rule = [types_with_ref_continue,types_with_unref_continue](const SyntaxTreeBranch& branch) {
         if(branch.tail != nullptr && !branch.tail->isnode("#") && (!branch.tail->isnode() ||
-           !types_with_ref_continue.contains(branch.tail->get_type()))) return false;
+           !contains(types_with_ref_continue, branch.tail->get_type()))) return false;
         if(branch.isnode("#")) return true;
         if(!branch.isnode())   return false;
 
-        return types_with_ref_continue.contains(branch.get_type()) ||
-               types_with_unref_continue.contains(branch.get_type());
+        return contains(types_with_ref_continue, branch.get_type()) ||
+               contains(types_with_unref_continue, branch.get_type());
     };
 
     return result;
