@@ -5,8 +5,6 @@
 // The output of this program is a rendering of the parsed input from the second
 // input file. 
 
-double stopped_time;
-
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -17,7 +15,6 @@ double stopped_time;
 #include <memory>
 #include <string>
 #include <vector>
-#include <deque>
 
 using namespace std;
 
@@ -32,7 +29,7 @@ public:
 
     bool operator!=(const SyntaxTree& t) const;
 
-    bool               isleaf()                const { return node_value.empty(); }
+    bool               isleaf()                const { return node_value.empty() && !leaf_value.empty(); }
     bool               isleaf(const string& s) const { return node_value.empty() && leaf_value == s; }
     bool               isnode()                const { return !node_value.empty(); }
     bool               isnode(const string& s) const { return !node_value.empty() && get_type() == s; }
@@ -49,22 +46,18 @@ private:
     friend ostream& operator<<(ostream& ostr, const vector<SyntaxTree>& x);
 };
 
-// This function implements a generic parser using a Backus-Naur form language
-// specification that is provided as a string.
-static vector<SyntaxTree> Parse(string bnf_specification, string program_code);
+// These four functions are called by main to perform all relevant steps.
+// Firstly, the Backus-Naur form language specification is parsed.
+// Secondly, this is used to inform a second parser for the actual input.
+// Thirdly, the generic parsed syntax is analysed with IDL-specific routines.
+// Finally, the IDL structures are written to the standard output stream in a
+// format that is convenient for the succeeding code generation pass.
+vector<pair<string,SyntaxTree>> ParseBNF       (string input);
+vector<SyntaxTree>              Parse          (vector<pair<string,SyntaxTree>> bnf_spec, string input);
+vector<SyntaxTree>              ProcessIDLSpecs(const vector<SyntaxTree>& in_vector);
+ostream&                        operator<<     (ostream& ostr, const vector<SyntaxTree>& x);
 
-// This function extract IDL-specific constructs from the generic parsed code
-// that is provided as SyntaxTree instances.
-vector<SyntaxTree> ProcessIDLSpecs(const vector<SyntaxTree>& in_vector);
-
-// This formats the IDL specifications for further processing and codegen.
-ostream& operator<<(ostream& ostr, const vector<SyntaxTree>& x);
-
-// The main function is straightforward:
-// First, the program is language specification and program code are read.
-// Second the code is parsed according to the langauge specification.
-// Finally, the iDL specifications are extracted from the parsed syntax and
-// output to the standard output stream.
+// The main function basically just chains the previously declared functions.
 int main(int argc, char** argv)
 {
     try
@@ -77,13 +70,17 @@ int main(int argc, char** argv)
             return string(istreambuf_iterator<char>(ifs), {});
         };
 
-        stopped_time = 0.0;
-        auto parse_result   = Parse(read_whole_file(argv[1]), read_whole_file(argv[2]));
+        auto tmp1 = clock();
+        auto parsed_bnf     = ParseBNF(read_whole_file(argv[1]));
+        auto tmp2 = clock();
+        auto parse_result   = Parse(parsed_bnf, read_whole_file(argv[2]));
+        auto tmp3 = clock();
         auto exported_specs = ProcessIDLSpecs(parse_result);
-
-        cerr<<"Stopped seconds: "<<stopped_time<<"\n";
-
+        auto tmp4 = clock();
         cout<<exported_specs;
+        cerr<<"Stopped seconds: "<<(double)(tmp2-tmp1)/(double)CLOCKS_PER_SEC
+                            <<" "<<(double)(tmp3-tmp2)/(double)CLOCKS_PER_SEC
+                            <<" "<<(double)(tmp4-tmp3)/(double)CLOCKS_PER_SEC<<"\n";
     }
     catch(string error)
     {
@@ -112,6 +109,126 @@ ostream& operator<<(ostream& ostr, const vector<SyntaxTree>& x)
     return ostr<<(x.size()?")":"()");
 }
 
+// This function parses the Backus-Naur form language specification. Different to
+// the actual parser that the resulting grammar is informing, this is a hardcoded
+// deterministic LALR(2) parser.
+// The input has to be fairly well structured. In particular, all tokens have to
+// be separated by whitespace, as the lexer is very primitive.
+vector<pair<string,SyntaxTree>> ParseBNF(string input)
+{
+    vector<string> tokens{""};
+    for(auto c : input + " ) )")
+    {
+        if(isspace(c) && !tokens.back().empty()) tokens.push_back("");
+        if(!isspace(c)) tokens.back().push_back(c);
+    }
+    if(tokens.back().empty()) tokens.pop_back();
+
+    vector<SyntaxTree>              stack;
+    vector<pair<string,SyntaxTree>> result;
+    for(const auto& t : tokens)
+    {
+        if(t == "::=" || t == "|" || t == "[" || t == "]" || t == "{" || t == "}" || t == "(" || t == ")" || t == "!")
+            stack.push_back(SyntaxTree(t));
+        else if(t == "<s>")
+            stack.push_back(SyntaxTree("string", {}));
+        else if(t == "<n>")
+            stack.push_back(SyntaxTree("number", {}));
+        else if(t.front() == '<' && t.back() == '>')
+            stack.push_back(SyntaxTree("reference", {SyntaxTree(string(t.begin()+1, t.end()-1))}));
+        else if(t.front() == '\'' && t.back() == '\'' && t.size() >= 2)
+            stack.push_back(SyntaxTree("literal", {SyntaxTree(string(t.begin()+1, t.end()-1))}));
+        else stack.push_back(SyntaxTree("literal", {SyntaxTree(t)}));
+
+        while(true)
+        {
+            auto len = [&s=stack](size_t n)->bool             { return s.size() >= n; };
+            auto get = [&s=stack](size_t n)->const SyntaxTree&{ return s.rbegin()[n]; };
+            auto mov = [&s=stack](size_t n)->SyntaxTree       { return move(s.rbegin()[n]); };
+            auto set = [&s=stack](size_t n, SyntaxTree t)     { s.rbegin()[n] = t; s.erase(s.end()-n, s.end()-2); };
+            auto add = [get,mov] (size_t n1, size_t n2)->auto {
+                auto name = get(n1).get_type();
+                auto vect = mov(n1).children();
+                vect.push_back(mov(n2));
+                return SyntaxTree(name, vect);
+            };
+
+            if(len(4) && get(3).isnode() && get(2).isnode() && !get(1).isleaf("::="))
+            {
+                set(3, get(3).isnode("sequence")?add(3, 2):SyntaxTree("sequence", {mov(3), mov(2)}));
+            }
+            else if(len(5) && get(4).isleaf("[") && get(3).isnode() && get(2).isleaf("]"))
+            {
+                set(4, SyntaxTree("optional", get(3).isnode("sequence")?mov(3).children():vector<SyntaxTree>{mov(3)}));
+            }
+            else if(len(5) && get(4).isleaf("{") && get(3).isnode() && get(2).isleaf("}"))
+            {
+                set(4, SyntaxTree("repeat", get(3).isnode("sequence")?mov(3).children():vector<SyntaxTree>{mov(3)}));
+            }
+            else if(len(5) && get(4).isnode() && get(3).isleaf("|") && get(2).isnode() && (get(0).isleaf("::=") ||
+                    get(1).isleaf("|") || get(1).isleaf(")") || get(1).isleaf("]") || get(1).isleaf("}")))
+            {
+                set(4, get(4).isnode("choice")?add(4, 2):SyntaxTree("choice", {mov(4), mov(2)}));
+            }
+            else if(len(5) && get(4).isnode("literal") && get(3).isleaf("::=") && get(2).isnode() &&
+                   ((get(1).isleaf(")") && get(0).isleaf(")")) || (get(1).isnode("literal") && get(0).isleaf("::="))))
+            {
+                result.push_back({get(4)[0].get_leaf(), mov(2)});
+                stack.erase(stack.end()-5, stack.end()-2);
+            }
+            else if(len(5) && get(4).isleaf("(") && get(3).isnode() && get(2).isleaf(")")) set(4, mov(3));
+            else break;
+        }
+    }
+
+    if(stack.size() > 2)
+    {
+        stringstream sstr;
+        sstr<<"Failed to parse BNF file, as not all syntax collapsed to transformation rules.\n"
+            <<"    "<<vector<SyntaxTree>(stack.begin(), stack.end()-2)<<"\n";
+        throw sstr.str();
+    }
+
+    return result;
+}
+
+// This constructor places the type string for the node in the first child and
+// simplifies the tree by "inlining" all nodes with type strings containing '@'.
+SyntaxTree::SyntaxTree(string l, vector<SyntaxTree> n) : node_value(n)
+{
+    for(size_t i = 0; i < node_value.size(); )
+    {
+        SyntaxTree child = move(node_value[i]);
+
+        if(child.isnode() && child.get_type().find('@') != string::npos)
+        {
+            if(child.node_value.size() > 1)
+            {
+                node_value[i] = move(child.node_value[1]);
+                node_value.insert(node_value.begin()+i+1, make_move_iterator(child.node_value.begin()+2),
+                                                          make_move_iterator(child.node_value.end()));
+            }
+            else node_value.erase(node_value.begin()+i);
+            i += child.size();
+        }
+        else
+        {
+            node_value[i] = move(child);
+            i++;
+        }
+    }
+
+    node_value.insert(node_value.begin(), SyntaxTree(l));
+}
+
+// This gives a way to move out the children without copies.
+vector<SyntaxTree> SyntaxTree::children() &&
+{
+    if(!node_value.empty())
+        node_value.erase(node_value.begin());
+    return move(node_value);
+}
+
 // This class stores one possible state for the non-deterministic parser below.
 class ParseBranch : public SyntaxTree
 {
@@ -122,40 +239,35 @@ public:
 
     ParseBranch(SyntaxTree h, shared_ptr<ParseBranch> t) : SyntaxTree(h), tail(t) { }
 
-    PotentialBranch literal_rule      (const string& n, const string& match) const;
-    PotentialBranch reference_rule    (const string& n, const string& match) const;
-    PotentialBranch string_rule       (const string& n) const;
-    PotentialBranch number_rule       (const string& n) const;
-    PotentialBranch add_literal_rule  (const string& n, const unordered_set<string>& prev, const string& match) const;
-    PotentialBranch add_reference_rule(const string& n, const unordered_set<string>& prev, const string& match) const;
-    PotentialBranch add_string_rule   (const string& n, const unordered_set<string>& prev) const;
-    PotentialBranch add_number_rule   (const string& n, const unordered_set<string>& prev) const;
+    static TransitionRule cont_lit_rule (string name, unordered_set<string> prev, string match);
+    static TransitionRule cont_ref_rule (string name, unordered_set<string> prev, string match);
+    static TransitionRule cont_str_rule (string name, unordered_set<string> prev);
+    static TransitionRule cont_nbr_rule (string name, unordered_set<string> prev);
+    static RetentionRule  retention_rule(unordered_set<string> prev,  unordered_set<string> match);
 
     bool operator==(const ParseBranch& o) const;
 
     operator vector<SyntaxTree>() &&;
 
+private:
+    bool tailtest(const unordered_set<string>&) const;
+
+    shared_ptr<ParseBranch> fork(bool from_tail, bool keep_head, string name) const;
+
     shared_ptr<ParseBranch> tail;
 };
 
-// This class stores the non-deterministic transition rules that are extracted
-// from the Backus-Naur form langauge specification in the single constructor.
-class GrammarRules
-{
-public:
-    GrammarRules(string bnf_specification);
-
-    vector<ParseBranch::TransitionRule> transition_rules;
-    ParseBranch::RetentionRule          retention_rule;
-};
+// This function decomposes the parsed Backus-Naur form syntax description
+// into simple transition rules that are easily applied by the Parse function.
+pair<vector<ParseBranch::TransitionRule>,ParseBranch::RetentionRule> DecomposeBNF(vector<pair<string,SyntaxTree>> bnf);
 
 // This is the actual parser. However, much of the heavy lifting has been
 // offloaded to the GrammarRules and ParseBranch classes.
-vector<SyntaxTree> Parse(string bnf_specification, string program_code)
+vector<SyntaxTree> Parse(vector<pair<string,SyntaxTree>> bnf_spec, string input)
 {
     bool in_comment = false;
     vector<string> tokens{{}};
-    for(auto c : program_code)
+    for(auto c : input)
     {
         if(c == '#')  in_comment = true;
         if(c == '\n') in_comment = false;
@@ -177,7 +289,7 @@ vector<SyntaxTree> Parse(string bnf_specification, string program_code)
     }
     if(tokens.back().empty()) tokens.pop_back();    
 
-    auto grammar_rules = GrammarRules(bnf_specification);
+    auto grammar_rules = DecomposeBNF(bnf_spec);
 
     vector<shared_ptr<ParseBranch>> syntax_branches{nullptr};
     vector<ParseBranch>             branch_workset;
@@ -195,22 +307,18 @@ vector<SyntaxTree> Parse(string bnf_specification, string program_code)
             next_branch_workset.clear();
             for(auto& branch : branch_workset)
             {
-                auto tmp1 = clock();
-
-                for(const auto& rule : grammar_rules.transition_rules)
+                for(const auto& rule : grammar_rules.first)
                     if(auto result = rule(branch))
                         next_branch_workset.push_back(*result);
 
-                auto tmp2 = clock();
-                stopped_time += (double)(tmp2-tmp1)/(double)CLOCKS_PER_SEC;
-
-                if(grammar_rules.retention_rule(branch) && !any_of(syntax_branches.begin(), syntax_branches.end(),
-                                                                   [&branch](const auto& b) { return *b == branch; }))
+                if(grammar_rules.second(branch) && !any_of(syntax_branches.begin(), syntax_branches.end(),
+                                                           [&branch](const auto& b) { return *b == branch; }))
                     syntax_branches.push_back(shared_ptr<ParseBranch>(new ParseBranch(move(branch))));
             }
 
             swap(branch_workset, next_branch_workset);
         }
+
         if(syntax_branches.empty()) break;
     }
 
@@ -262,331 +370,172 @@ ParseBranch::operator vector<SyntaxTree>() &&
     return trees;
 }
 
-// This function parses the Backus-Naur form language specification.
-vector<pair<string,SyntaxTree>> ParseBNF(string bnf_specification);
-
 // This is a workaround to allow building without enabling C++20 in the compiler.
 template<typename T> bool contains(const unordered_set<T>& S, const T& E) { return S.find(E) != S.end(); }
 
-GrammarRules::GrammarRules(string bnf_specification)
+// This function takes the parsed language specification and decomposes the
+// Backus-Naur form syntax rules into small, incremental transformation rules.
+pair<vector<ParseBranch::TransitionRule>,ParseBranch::RetentionRule> DecomposeBNF(vector<pair<string,SyntaxTree>> stack)
 {
-    auto stack = ParseBNF(bnf_specification);
-
-    auto get_temp = [](string in, int i)->string{ stringstream sstr; sstr<<in<<"@"<<i; return sstr.str(); };
-
-    unordered_set<string> types_with_ref_continue;
-    unordered_set<string> types_with_unref_continue;
-    vector<function<shared_ptr<ParseBranch>(const ParseBranch&)>> rules;
-
+    vector<tuple<string,unordered_set<string>,unordered_set<string>>> ref_rule;
+    vector<tuple<string,unordered_set<string>,string>>                lit_rule;
+    vector<tuple<string,unordered_set<string>>>                       str_rule;
+    vector<tuple<string,unordered_set<string>>>                       nbr_rule;
     while(!stack.empty())
     {
         auto l = move(stack.back().first);
         auto r = move(stack.back().second);
         stack.pop_back();
 
-        if(r.isnode("literal"))
-            rules.push_back([l,s=r[0].get_leaf()](const ParseBranch& b) { return b.literal_rule(l, s); });
-        else if(r.isnode("reference") && r[0].isleaf("s"))
-            rules.push_back([l](const ParseBranch& b) { return b.string_rule (l); });
-        else if(r.isnode("reference") && r[0].isleaf("n"))
-            rules.push_back([l](const ParseBranch& b) { return b.number_rule (l); });
-        else if(r.isnode("reference"))
-            rules.push_back([l,s=r[0].get_leaf()](const ParseBranch& b) { return b.reference_rule(l, s); });
+        using make_set = unordered_set<string>;
+
+        if     (r.isnode("literal"))   lit_rule.emplace_back(l, make_set{}, r[0].get_leaf());
+        else if(r.isnode("reference")) ref_rule.emplace_back(l, make_set{}, make_set{r[0].get_leaf()});
+        else if(r.isnode("string"))    str_rule.emplace_back(l, make_set{});
+        else if(r.isnode("number"))    nbr_rule.emplace_back(l, make_set{});
         else if(r.isnode("choice"))
             for(auto& choice : move(r).children()) stack.push_back({l, choice});
         else if(r.isnode("sequence"))
         {
+            size_t counter = 0;
             unordered_set<string> old_tmps;
-            string                tmp = get_temp(l, 0);
-
-            auto tail = move(r).children();
-            auto head = move(tail.front());
-            tail.erase(tail.begin());
-
-            if(head.isnode("literal"))
-                rules.push_back([l=tmp,s=head[0].get_leaf()](const ParseBranch& b) { return b.literal_rule(l, s); });
-            else if(head.isnode("reference"))
-                tmp = head[0].get_leaf();
-            else if(head.isnode("choice"))
+            unordered_set<string> new_tmps;
+            for(auto& part : move(r).children())
             {
-                for(auto& choice : move(head).children())
-                    if(choice.isnode("reference")) old_tmps.insert(choice[0].get_leaf());
-                    else                           stack.push_back({tmp, move(choice)});
-            }
-            else throw string("Syntax Error in BNF file: Sequence rule has invalid initial part.");
-
-            old_tmps.insert(tmp);
-            for(size_t i = 0; i < tail.size(); i++)
-            {
-                unordered_set<string> new_tmps;
-
-                if(tail[i].isnode("choice"))
+                if(old_tmps.empty() && part.isnode("reference"))
                 {
-                    string tmp = (i+1 < tail.size())?get_temp(l, i+1):l;
-                    new_tmps.insert(tmp);
-
-                    for(size_t k = 0; k < tail[i].size(); k++)
-                    {
-                        vector<SyntaxTree> refchoice_contents;
-                        for(const auto& old_tmp : old_tmps)
-                            refchoice_contents.push_back(SyntaxTree("reference", {SyntaxTree(old_tmp)}));
-
-                        vector<SyntaxTree> sequence_contents{SyntaxTree("choice", refchoice_contents)};
-    
-                        if(tail[i][k].isnode("sequence"))
-                            for(size_t l = 0; l < tail[i][k].size(); l++)
-                                sequence_contents.push_back(tail[i][k][l]);
-
-                        stack.push_back({tmp,SyntaxTree("sequence", sequence_contents)});
-                    }
+                    old_tmps.insert(part[0].get_leaf());
+                    continue;
                 }
-                else if(tail[i].isnode("optional") || tail[i].isnode("repeat"))
+
+                new_tmps.clear();
+
+                stringstream sstr;
+                sstr<<l<<"@"<<(counter++);
+                string name = sstr.str();
+            
+                auto sequence_cont = [](unordered_set<string> prev, vector<SyntaxTree> s)->SyntaxTree
                 {
-                    string tmp = (i+1 < tail.size())?get_temp(l, i+1):l;
-                    new_tmps.insert(tmp);
-
-                    if(tail[i].isnode("repeat")) {
-                        old_tmps.insert(tmp);
-                    }
-
                     vector<SyntaxTree> refchoice_contents;
-                    for(const auto& old_tmp : old_tmps)
-                        refchoice_contents.push_back(SyntaxTree("reference", {SyntaxTree(old_tmp)}));
+                    for(const auto& v : prev)
+                        refchoice_contents.push_back(SyntaxTree("reference", {SyntaxTree(v)}));
 
-                    vector<SyntaxTree> news2_content{SyntaxTree("choice", refchoice_contents)};
+                    vector<SyntaxTree> sequence_contents{SyntaxTree("choice", refchoice_contents)};
 
-                    for(size_t k = 0; k < tail[i].size(); k++)
-                        news2_content.push_back(tail[i][k]);
+                    for(size_t l = 0; l < s.size(); l++)
+                        sequence_contents.push_back(s[l]);
 
-                    stack.push_back({tmp, SyntaxTree("sequence", news2_content)});
+                    return SyntaxTree("sequence", sequence_contents);
+                };
 
-                    if(tail[i].isnode("optional"))
-                        new_tmps.insert(old_tmps.begin(), old_tmps.end());
-                    else new_tmps = old_tmps;
-                }
-                else
+                if     (part.isnode("literal"))   lit_rule.emplace_back(name, old_tmps, part[0].get_leaf());
+                else if(part.isnode("reference")) ref_rule.emplace_back(name, old_tmps, make_set{part[0].get_leaf()});
+                else if(part.isnode("string"))    str_rule.emplace_back(name, old_tmps);
+                else if(part.isnode("number"))    nbr_rule.emplace_back(name, old_tmps);
+                else if(part.isnode("choice"))
                 {
-                    string tmp = (i+1 < tail.size())?get_temp(l, i+1):l;
-                    new_tmps.insert(tmp);
+                    for(auto& choice : move(part).children())
+                    {
+                        if(old_tmps.empty() && choice.isnode("reference")) new_tmps.insert(choice[0].get_leaf());
+                        else if(old_tmps.empty())          stack.push_back({name, move(choice)});
+                        else if(choice.isnode("sequence")) stack.push_back({name, sequence_cont(old_tmps, move(choice).children())});
+                        else                               stack.push_back({name, sequence_cont(old_tmps, {move(choice)})});
+                    }
+                }
+                else if(part.isnode("optional") && !old_tmps.empty())
+                {
+                    stack.push_back({name, sequence_cont(old_tmps, move(part).children())});
 
-                    if(tail[i].isnode("literal")) {
-                        rules.push_back([=](const ParseBranch& branch) { return branch.add_literal_rule(tmp, old_tmps, tail[i][0].get_leaf()); });
-                        types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
-                    }
-                    else if(tail[i].isnode("reference") && tail[i][0].isleaf("s")) {
-                        rules.push_back([=](const ParseBranch& branch) { return branch.add_string_rule(tmp, old_tmps); });
-                        types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
-                    }
-                    else if(tail[i].isnode("reference") && tail[i][0].isleaf("n")) {
-                        rules.push_back([=](const ParseBranch& branch) { return branch.add_number_rule(tmp, old_tmps); });
-                        types_with_unref_continue.insert(old_tmps.begin(), old_tmps.end());
-                    }
-                    else if(tail[i].isnode("reference")) {
-                        rules.push_back([=](const ParseBranch& branch) { return branch.add_reference_rule(tmp, old_tmps, tail[i][0].get_leaf()); });
-                        types_with_ref_continue.insert(old_tmps.begin(), old_tmps.end());
-                    }
-                    else throw string("Failed to process BNF file, some sequence rule cannot be dissected fully.");
+                    new_tmps = move(old_tmps);
+                    new_tmps.insert(name);
                 }
 
-                old_tmps = new_tmps;
+                else if(part.isnode("repeat") && !old_tmps.empty())
+                {
+                    old_tmps.insert(name);
+        
+                    stack.push_back({name, sequence_cont(old_tmps, move(part).children())});
+
+                    new_tmps = move(old_tmps);
+                }
+                else throw string("Failed to process BNF file, some sequence rule cannot be dissected fully.");
+
+                new_tmps.insert(name);
+                swap(old_tmps, new_tmps);
             }
             for(auto old_tmp : old_tmps)
-                if(old_tmp != l)
-                    rules.push_back([=](const ParseBranch& branch) { return branch.reference_rule(l, old_tmp); });
+                ref_rule.push_back({l, make_set{}, make_set{old_tmp}});
         }
         else throw string("Syntax Error in BNF file: No decomposition to break down complex rule.");
     }
 
-    swap(transition_rules, rules);
-
-    retention_rule = [types_with_ref_continue,types_with_unref_continue](const ParseBranch& branch) {
-        if(branch.tail != nullptr && !branch.tail->isnode("#") && (!branch.tail->isnode() ||
-           !contains(types_with_ref_continue, branch.tail->get_type()))) return false;
-        if(branch.isnode("#")) return true;
-        if(!branch.isnode())   return false;
-
-        return contains(types_with_ref_continue, branch.get_type()) ||
-               contains(types_with_unref_continue, branch.get_type());
-    };
-}
-
-// This constructor places the type string for the node in the first child and
-// simplifies the tree by "inlining" all nodes with type strings containing '@'.
-SyntaxTree::SyntaxTree(string l, vector<SyntaxTree> n) : node_value(n)
-{
-    for(size_t i = 0; i < node_value.size(); )
+    vector<ParseBranch::TransitionRule> transition_rules;
+    unordered_set<string> types_with_ref_continue{"#"};
+    unordered_set<string> types_with_any_continue{"#"};
+    for(auto& rule : ref_rule)
     {
-        SyntaxTree child = move(node_value[i]);
-
-        if(child.isnode() && child.get_type().find('@') != string::npos)
-        {
-            if(child.node_value.size() > 1)
-            {
-                node_value[i] = move(child.node_value[1]);
-                node_value.insert(node_value.begin()+i+1, make_move_iterator(child.node_value.begin()+2),
-                                                          make_move_iterator(child.node_value.end()));
-            }
-            else node_value.erase(node_value.begin()+i);
-            i += child.size();
-        }
-        else
-        {
-            node_value[i] = move(child);
-            i++;
-        }
+        for(auto x : get<2>(rule))
+            transition_rules.push_back(ParseBranch::cont_ref_rule(get<0>(rule), get<1>(rule), x));
+        types_with_ref_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
+        types_with_any_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
+    }
+    for(auto& rule : lit_rule)
+    {
+        transition_rules.push_back(ParseBranch::cont_lit_rule(get<0>(rule), get<1>(rule), get<2>(rule)));
+        types_with_any_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
+    }
+    for(auto& rule : str_rule)
+    {
+        transition_rules.push_back(ParseBranch::cont_str_rule(get<0>(rule), get<1>(rule)));
+        types_with_any_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
+    }
+    for(auto& rule : nbr_rule)
+    {
+        transition_rules.push_back(ParseBranch::cont_nbr_rule(get<0>(rule), get<1>(rule)));
+        types_with_any_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
     }
 
-    node_value.insert(node_value.begin(), SyntaxTree(l));
+    return {transition_rules, ParseBranch::retention_rule(types_with_ref_continue, types_with_any_continue)};
 }
 
-// This gives a way to move out the children without copies.
-vector<SyntaxTree> SyntaxTree::children() &&
+// These member functions of ParseBranch are used to generate non-deterministic
+// rules that can be applied to the parse stack in order to combine syntax nodes.
+ParseBranch::TransitionRule ParseBranch::cont_lit_rule(string n, unordered_set<string> p, string m)
+    { return [=](const ParseBranch& b) { return ((p.empty() || b.tailtest(p)) && b.isleaf(m))
+                                                ?b.fork(!p.empty(), false, n):nullptr; }; }
+
+ParseBranch::TransitionRule ParseBranch::cont_ref_rule(string n, unordered_set<string> p, string m)
+    { return [=](const ParseBranch& b){ return ((p.empty() || b.tailtest(p)) && b.isnode(m))
+                                               ?b.fork(!p.empty(), true, n):nullptr; }; }
+
+ParseBranch::TransitionRule ParseBranch::cont_str_rule(string n, unordered_set<string> p)
+    { return [=](const ParseBranch& b){ return ((p.empty() || b.tailtest(p)) && b.isleaf() && !isdigit(b.get_leaf()[0]))
+                                               ?b.fork(!p.empty(), true, n):nullptr; }; }
+
+ParseBranch::TransitionRule ParseBranch::cont_nbr_rule(string n, unordered_set<string> p)
+    { return [=](const ParseBranch& b){ return ((p.empty() || b.tailtest(p)) && b.isleaf() && isdigit(b.get_leaf()[0]))
+                                               ?b.fork(!p.empty(), true, n):nullptr; }; }
+
+ParseBranch::RetentionRule ParseBranch::retention_rule(unordered_set<string> p,  unordered_set<string> m)
+    { return [=](const ParseBranch& b) { return (b.tail == nullptr || b.tailtest(p)) &&
+                                                 b.isnode() && contains(m, b.get_type()); }; }
+
+bool ParseBranch::tailtest(const unordered_set<string>& p) const
+    { return tail && tail->isnode() && contains(p, tail->get_type()); }
+
+shared_ptr<ParseBranch> ParseBranch::fork(bool from_tail, bool keep_head, string n) const
 {
-    if(!node_value.empty())
-        node_value.erase(node_value.begin());
-    return move(node_value);
+    if(from_tail && tail && keep_head) return make_shared<ParseBranch>(SyntaxTree(n, {*tail, *this}), tail->tail);
+    else if(from_tail && tail)         return make_shared<ParseBranch>(SyntaxTree(n, {*tail}),        tail->tail);
+    else if                (keep_head) return make_shared<ParseBranch>(SyntaxTree(n,        {*this}), tail);
+    else                               return make_shared<ParseBranch>(SyntaxTree(n,      {}),        tail);
 }
 
-shared_ptr<ParseBranch> ParseBranch::literal_rule(const string& n, const string& match) const
-{
-    if(isleaf(match))
-        return make_shared<ParseBranch>(SyntaxTree(n, {}), tail);
-    else return nullptr;
-}
-
-shared_ptr<ParseBranch> ParseBranch::reference_rule(const string& n, const string& match) const
-{
-    if(isnode(match))
-        return make_shared<ParseBranch>(SyntaxTree(n, {*this}), tail);
-    else return nullptr;
-}
-
-shared_ptr<ParseBranch> ParseBranch::string_rule(const string& n) const
-{
-    if(isleaf() && !isdigit(get_leaf()[0]))
-        return make_shared<ParseBranch>(SyntaxTree(n, {*this}), tail);
-    else return nullptr;
-}
-
-shared_ptr<ParseBranch> ParseBranch::number_rule(const string& n) const
-{
-    if(isleaf() && isdigit(get_leaf()[0]))
-        return make_shared<ParseBranch>(SyntaxTree(n, {*this}), tail);
-    else return nullptr;
-}
-
-shared_ptr<ParseBranch> ParseBranch::add_literal_rule(const string& n, const unordered_set<string>& prev, const string& match) const
-{
-    if(tail && tail->isnode() && contains(prev, tail->get_type()) && isleaf(match))
-        return make_shared<ParseBranch>(SyntaxTree(n, {*tail}), tail->tail);
-    else return nullptr;
-}
-
-shared_ptr<ParseBranch> ParseBranch::add_reference_rule(const string& n, const unordered_set<string>& prev, const string& match) const
-{
-    if(tail && tail->isnode() && contains(prev, tail->get_type()) && isnode(match))
-        return make_shared<ParseBranch>(SyntaxTree(n, {*tail, *this}), tail->tail);
-    else return nullptr;
-}
-
-shared_ptr<ParseBranch> ParseBranch::add_string_rule(const string& n, const unordered_set<string>& prev) const
-{
-    if(tail && tail->isnode() && contains(prev, tail->get_type()) && isleaf() && !isdigit(get_leaf()[0]))
-        return make_shared<ParseBranch>(SyntaxTree(n, {*tail, *this}), tail->tail);
-    else return nullptr;
-}
-
-shared_ptr<ParseBranch> ParseBranch::add_number_rule(const string& n, const unordered_set<string>& prev) const
-{
-    if(tail && tail->isnode() && contains(prev, tail->get_type()) && isleaf() && isdigit(get_leaf()[0]))
-        return make_shared<ParseBranch>(SyntaxTree(n, {*tail, *this}), tail->tail);
-    else return nullptr;
-}
-
-// This function parses the Backus-Naur form language specification. Different to
-// the actual parser that the resulting grammar is informing, this is a hardcoded
-// deterministic LALR(2) parser.
-// The input has to be fairly well structured. In particular, all tokens have to
-// be separated by whitespace, as the lexer is very primitive.
-vector<pair<string,SyntaxTree>> ParseBNF(string bnf_specification)
-{
-    vector<string> tokens{""};
-    for(auto c : bnf_specification + " ) )")
-    {
-        if(isspace(c) && !tokens.back().empty()) tokens.push_back("");
-        if(!isspace(c)) tokens.back().push_back(c);
-    }
-    if(tokens.back().empty()) tokens.pop_back();
-
-    vector<SyntaxTree>              stack;
-    vector<pair<string,SyntaxTree>> result;
-    for(const auto& t : tokens)
-    {
-        if(t == "::=" || t == "|" || t == "[" || t == "]" || t == "{" || t == "}" || t == "(" || t == ")" || t == "!")
-            stack.push_back(SyntaxTree(t));
-        else if(t.front() == '<' && t.back() == '>')
-            stack.push_back(SyntaxTree("reference", {SyntaxTree(string(t.begin()+1, t.end()-1))}));
-        else if(t.front() == '\'' && t.back() == '\'' && t.size() >= 2)
-            stack.push_back(SyntaxTree("literal", {SyntaxTree(string(t.begin()+1, t.end()-1))}));
-        else stack.push_back(SyntaxTree("literal", {SyntaxTree(t)}));
-
-        while(true)
-        {
-            auto len = [&s=stack](size_t n)->bool             { return s.size() >= n; };
-            auto get = [&s=stack](size_t n)->const SyntaxTree&{ return s.rbegin()[n]; };
-            auto mov = [&s=stack](size_t n)->SyntaxTree       { return move(s.rbegin()[n]); };
-            auto set = [&s=stack](size_t n, SyntaxTree t)     { s.rbegin()[n] = t; s.erase(s.end()-n, s.end()-2); };
-            auto add = [get,mov] (size_t n1, size_t n2)->auto {
-                auto name = get(n1).get_type();
-                auto vect = mov(n1).children();
-                vect.push_back(mov(n2));
-                return SyntaxTree(name, vect);
-            };
-
-            if(len(4) && get(3).isnode() && get(2).isnode() && !get(1).isleaf("::="))
-            {
-                set(3, get(3).isnode("sequence")?add(3, 2):SyntaxTree("sequence", {move(get(3)), move(get(2))}));
-            }
-            else if(len(5) && get(4).isnode() && get(3).isleaf("|") && get(2).isnode() && (get(0).isleaf("::=") ||
-                    get(1).isleaf("|") || get(1).isleaf(")") || get(1).isleaf("]") || get(1).isleaf("}")))
-            {
-                set(4, get(4).isnode("choice")?add(4, 2):SyntaxTree("choice", {mov(4), mov(2)}));
-            }
-            else if(len(5) && get(4).isleaf("(") && get(3).isnode() && get(2).isleaf(")"))
-            {
-                set(4, mov(3));
-            }
-            else if(len(5) && get(4).isleaf("[") && get(3).isnode() && get(2).isleaf("]"))
-            {
-                set(4, SyntaxTree("optional", get(3).isnode("sequence")?mov(3).children():vector<SyntaxTree>{mov(3)}));
-            }
-            else if(len(5) && get(4).isleaf("{") && get(3).isnode() && get(2).isleaf("}"))
-            {
-                set(4, SyntaxTree("repeat", get(3).isnode("sequence")?mov(3).children():vector<SyntaxTree>{mov(3)}));
-            }
-            else if(len(5) && get(4).isnode("literal") && get(3).isleaf("::=") && get(2).isnode() &&
-                   ((get(1).isleaf(")") && get(0).isleaf(")")) || (get(1).isnode("literal") && get(0).isleaf("::="))))
-            {
-                result.push_back({get(4)[0].get_leaf(), mov(2)});
-                stack.erase(stack.end()-5, stack.end()-2);
-            }
-            else if(stack.size() == 2 && get(1).isleaf(")") && get(0).isleaf(")"))
-                return result;
-            else break;
-        }
-    }
-
-    stringstream sstr;
-    sstr<<"Failed to parse BNF file, as not all syntax collapsed to transformation rules.\n    "<<stack<<"\n";
-    throw sstr.str();
-}
-
-/* This part is IDL specific */
-
-
-SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTree>& lookup,
-                              unordered_map<string,int> varlookup={}, unordered_set<string> collectvars = {},
-                              function<SyntaxTree(const SyntaxTree&)> renaming = nullptr);
+// This is the first function that is specific to IDL. It eliminates certain
+// complex langauge features by unrolling loop constructs etc.
+SyntaxTree SimplifyIDLConstraint(SyntaxTree in, const unordered_map<string,SyntaxTree>& lookup,
+                                 unordered_map<string,int> indices={}, vector<string> collidx = {},
+                                 function<SyntaxTree(const SyntaxTree&)> renaming = nullptr);
 
 vector<SyntaxTree> ProcessIDLSpecs(const vector<SyntaxTree>& in_vector)
 {
@@ -596,95 +545,21 @@ vector<SyntaxTree> ProcessIDLSpecs(const vector<SyntaxTree>& in_vector)
             lookup.insert({in[0].get_leaf(), in[1]});
 
     vector<SyntaxTree> result;
-    for(size_t i = 0; i+1 < in_vector.size(); i++) {
-        const SyntaxTree& in = in_vector[i];
-        const SyntaxTree& next = in_vector[i+1];
-        if(next.isnode("export") && in.isnode("specification"))
-        {
-            SyntaxTree tree(SyntaxTree{"specification", {in[0], extract_constraint(in[1], lookup)}});
-            result.push_back(tree);
-        }
-    }
+    for(size_t i = 0; i+1 < in_vector.size(); i++)
+        if(in_vector[i+1].isnode("export") && in_vector[i].isnode("specification"))
+            result.push_back({"specification", {in_vector[i][0], SimplifyIDLConstraint(in_vector[i][1], lookup)}});
+
     return result;
 }
 
-int extract_index(SyntaxTree in, const unordered_map<string,int>& vars)
-{
-    auto recurs = [&in,&vars](size_t i) { return extract_index(in[i], vars); };
-    auto as_int = [&in      ](size_t i) { return atoi(in[i].get_leaf().c_str()); };
-    auto lookup = [&in,&vars](size_t i) {
-        auto find_it = vars.find(in[i].get_leaf());
-        if(find_it == vars.end())
-            throw string("Undefined variable \""+in[1].get_leaf()+"\" in index calculations.");
-        return find_it->second;
-    };
-    if(in.isnode("basevar")   && in.size() == 1) return lookup(0);
-    if(in.isnode("baseconst") && in.size() == 1) return as_int(0);
-    if(in.isnode("addvar")    && in.size() == 2) return recurs(0)+lookup(1);
-    if(in.isnode("addconst")  && in.size() == 2) return recurs(0)+as_int(1);
-    if(in.isnode("subvar")    && in.size() == 2) return recurs(0)-lookup(1);
-    if(in.isnode("subconst")  && in.size() == 2) return recurs(0)-as_int(1);
-    throw string("Index calculation constraints invalid node type \""+in.get_type()+"\".");
-}
+int CollapseIDLIndex(SyntaxTree in, const unordered_map<string,int>& vars);
 
-vector<SyntaxTree> extract_var(SyntaxTree in, const unordered_map<string,int>& vars,
-                                                     const unordered_set<string>& collectvars)
-{
-    auto int_to_syntax = [](int i)->SyntaxTree {
-        stringstream sstr; sstr<<i;
-        return SyntaxTree("baseconst", {SyntaxTree(sstr.str())});
-    };
+vector<SyntaxTree> NormaliseIDLVar(SyntaxTree in, const unordered_map<string,int>& indices,
+                                                  const vector<string>&            collidx);
 
-    vector<SyntaxTree> result;
-    if(in.isnode("slotbase")) result.push_back(in);
-    else if(in.isnode("slottuple"))
-    {
-        for(size_t i = 0; i < in.size(); i++)
-            for(auto tmp : extract_var(in[i], vars, collectvars))
-                result.push_back(tmp);
-    }
-    else if(in.isnode("slotmember"))
-    {
-        for(auto tmp : extract_var(in[0], vars, collectvars))
-            result.push_back(SyntaxTree("slotmember", {tmp, in[1]}));
-    }
-    else if(in.isnode("slotindex"))
-    {
-        if(in[1].isnode("basevar"))
-        {
-            auto find_it = collectvars.find(in[1][0].get_leaf());
-            if(find_it != collectvars.end())
-            {
-                for(auto tmp : extract_var(in[0], vars, collectvars))
-                    result.push_back(SyntaxTree("slotindex", {tmp, in[1]}));
-            }
-            else
-            {
-                for(auto tmp : extract_var(in[0], vars, collectvars))
-                    result.push_back(SyntaxTree("slotindex", {tmp, int_to_syntax(extract_index(in[1], vars))}));
-            }
-        }
-        else
-        {
-            for(auto tmp : extract_var(in[0], vars, collectvars))
-                result.push_back(SyntaxTree("slotindex", {tmp, int_to_syntax(extract_index(in[1], vars))}));
-        }
-    }
-    else if(in.isnode("slotrange"))
-    {
-        int begin = extract_index(in[1], vars);
-        int end   = extract_index(in[2], vars);
-        for(int index = begin; index < end; index++)
-            for(auto tmp : extract_var(in[0], vars, collectvars))
-                result.push_back(SyntaxTree("slotindex", {tmp, int_to_syntax(index)}));
-    }
-    else throw string("Variable slot constraints invalid node type \""+in.get_type()+"\".");
-    return result;
-}
-
-SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTree>& lookup,
-                              unordered_map<string,int> varlookup, unordered_set<string> collectvars,
-                              function<SyntaxTree(const SyntaxTree&)> renaming)
+SyntaxTree SimplifyIDLConstraint(SyntaxTree in, const unordered_map<string,SyntaxTree>& lookup,
+                                unordered_map<string,int> indices, vector<string> collidx,
+                                function<SyntaxTree(const SyntaxTree&)> renaming)
 {
     if(in.isnode("atom"))
     {
@@ -694,18 +569,15 @@ SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTr
         {
             if(SyntaxTree(constraint[i]).isleaf())
             {
-                processed_vars.push_back(SyntaxTree(SyntaxTree(constraint[i]).get_leaf()));
+                processed_vars.push_back(SyntaxTree(constraint[i].get_leaf()));
                 continue;
             }
 
             vector<SyntaxTree> vars;
-            for(auto tmp : extract_var(constraint[i], varlookup, collectvars))
+            for(auto tmp : NormaliseIDLVar(constraint[i], indices, collidx))
                 vars.push_back(renaming?renaming(tmp):tmp);
 
-            if(vars.size() == 1)
-                 processed_vars.push_back(vars.front());
-            else
-                processed_vars.push_back(SyntaxTree("slottuple", vars));
+            processed_vars.push_back((vars.size()==1)?vars.front():SyntaxTree("slottuple", vars));
         }
         in = SyntaxTree("atom", {SyntaxTree(in[0].get_type(), processed_vars)});
     }
@@ -714,7 +586,7 @@ SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTr
         vector<SyntaxTree> elements;
         for(size_t i = 0; i < in.size(); i++)
         {
-            SyntaxTree el = extract_constraint(in[i], lookup, varlookup, collectvars, renaming);
+            SyntaxTree el = SimplifyIDLConstraint(in[i], lookup, indices, collidx, renaming);
 
             if(el.isnode(in.get_type()))
             {
@@ -728,8 +600,8 @@ SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTr
     }
     else if(in.isnode("conRange") || in.isnode("disRange"))
     {
-        auto begin = extract_index(in[2], varlookup);
-        auto end   = in.isnode("for")?(begin+1):extract_index(in[3], varlookup);
+        auto begin = CollapseIDLIndex(in[2], indices);
+        auto end   = in.isnode("for")?(begin+1):CollapseIDLIndex(in[3], indices);
 
         string type = in.get_type();
         type.resize(3);
@@ -738,8 +610,8 @@ SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTr
         vector<SyntaxTree> elements;
         for(int index = begin; index < end; index++)
         {
-            varlookup[in[1].get_leaf()] = index;
-            SyntaxTree el = extract_constraint(in[0], lookup, varlookup, collectvars, renaming);
+            indices[in[1].get_leaf()] = index;
+            SyntaxTree el = SimplifyIDLConstraint(in[0], lookup, indices, collidx, renaming);
 
             if(el.isnode(type))
             {
@@ -753,15 +625,15 @@ SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTr
     }
     else if(in.isnode("default" )|| in.isnode("for"))
     {
-        auto index = extract_index(in[2], varlookup);
+        auto index = CollapseIDLIndex(in[2], indices);
 
-        auto find_it = in.isnode("for")?varlookup.end():varlookup.find(in[1].get_leaf());
-        if(find_it == varlookup.end())
+        auto find_it = in.isnode("for")?indices.end():indices.find(in[1].get_leaf());
+        if(find_it == indices.end())
         {
-            varlookup[in[1].get_leaf()] = index;
+            indices[in[1].get_leaf()] = index;
         }
 
-        in = extract_constraint(in[0], lookup, varlookup, collectvars, renaming);
+        in = SimplifyIDLConstraint(in[0], lookup, indices, collidx, renaming);
     }
     else if(in.isnode("rename"))
     {
@@ -780,8 +652,8 @@ SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTr
         SyntaxTree                       prefix("");
         for(size_t i = 1; i+1 < in.size(); i+=2)
         {
-            auto tmp1 = extract_var(in[i+1], varlookup, collectvars);
-            auto tmp2 = extract_var(in[i],   varlookup, collectvars);
+            auto tmp1 = NormaliseIDLVar(in[i+1], indices, collidx);
+            auto tmp2 = NormaliseIDLVar(in[i],   indices, collidx);
             if(tmp1.size() == tmp2.size())
             {
                 for(size_t j = 0; j < tmp1.size(); j++)
@@ -791,13 +663,13 @@ SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTr
         }
         if(0 == (in.size() % 2))
         {
-            auto tmp1 = extract_var(in[in.size()-1], varlookup, collectvars);
+            auto tmp1 = NormaliseIDLVar(in[in.size()-1], indices, collidx);
             if(tmp1.size() == 1)
                 prefix = tmp1.front();
             else throw string("Cannot prefix a tuple.");
         }
 
-        in = extract_constraint(in[0], lookup, varlookup, collectvars,
+        in = SimplifyIDLConstraint(in[0], lookup, indices, collidx,
                                 [renaming,&rename,&prefix,print_var](const SyntaxTree& var)
         {
             string printed = "."+print_var(var);
@@ -853,29 +725,86 @@ SyntaxTree extract_constraint(SyntaxTree in, const unordered_map<string,SyntaxTr
     }
     else if(in.isnode("collect"))
     {
-        collectvars.insert(in[0].get_leaf());
-        in = SyntaxTree("collect", {in[0], in[1],
-                                           extract_constraint(in[2], lookup, varlookup, collectvars, renaming)});
+        collidx.push_back(in[0].get_leaf());
+        in = SyntaxTree("collect", {in[0], in[1], SimplifyIDLConstraint(in[2], lookup, indices, collidx, renaming)});
     }
     else if(in.isnode("if"))
     {
-        auto index1 = extract_index(in[0], varlookup);
-        auto index2 = extract_index(in[1], varlookup);
-        in = extract_constraint(in[(index1 == index2)?2:3], lookup, varlookup, collectvars, renaming);
+        auto index1 = CollapseIDLIndex(in[0], indices);
+        auto index2 = CollapseIDLIndex(in[1], indices);
+        in = SimplifyIDLConstraint(in[(index1 == index2)?2:3], lookup, indices, collidx, renaming);
     }
     else if(in.isnode("include"))
     {
-        unordered_map<string,int> new_varlookup;
-        for(size_t i = 1; i+1 < in.size(); i+=2)
-            new_varlookup[in[i].get_leaf()] = extract_index(in[i+1], varlookup);
+        unordered_map<string,int> new_indices;
+        for(size_t i = 1; i+1 < in.size(); i += 2)
+            new_indices[in[i].get_leaf()] = CollapseIDLIndex(in[i+1], indices);
 
-        if(new_varlookup.empty()) new_varlookup = varlookup;
+        if(new_indices.empty()) new_indices = indices;
 
         auto find_it = lookup.find(in[0].get_leaf());
         if(find_it == lookup.end())
             throw string("Included specification \""+in[0].get_leaf()+"\" does not exist.\n");
-        in = extract_constraint(find_it->second, lookup, new_varlookup, collectvars, renaming);
+        in = SimplifyIDLConstraint(find_it->second, lookup, new_indices, collidx, renaming);
     }
     else throw string("Constraint formula constraints invalid node type \""+in.get_type()+"\".");
     return in;
+}
+
+int CollapseIDLIndex(SyntaxTree in, const unordered_map<string,int>& vars)
+{
+    auto recurs = [&in,&vars](size_t i) { return CollapseIDLIndex(in[i], vars); };
+    auto as_int = [&in      ](size_t i) { return atoi(in[i].get_leaf().c_str()); };
+    auto lookup = [&in,&vars](size_t i) {
+        auto find_it = vars.find(in[i].get_leaf());
+        if(find_it == vars.end())
+            throw string("Undefined variable \""+in[1].get_leaf()+"\" in index calculations.");
+        return find_it->second;
+    };
+    if(in.isnode("basevar")   && in.size() == 1) return lookup(0);
+    if(in.isnode("baseconst") && in.size() == 1) return as_int(0);
+    if(in.isnode("addvar")    && in.size() == 2) return recurs(0)+lookup(1);
+    if(in.isnode("addconst")  && in.size() == 2) return recurs(0)+as_int(1);
+    if(in.isnode("subvar")    && in.size() == 2) return recurs(0)-lookup(1);
+    if(in.isnode("subconst")  && in.size() == 2) return recurs(0)-as_int(1);
+    throw string("Index calculation constraints invalid node type \""+in.get_type()+"\".");
+}
+
+vector<SyntaxTree> NormaliseIDLVar(SyntaxTree in, const unordered_map<string,int>& indices,
+                                                  const vector<string>&            collidx)
+{
+    auto const_syntax = [](int i)->SyntaxTree {
+        stringstream sstr; sstr<<i;
+        return SyntaxTree("baseconst", {SyntaxTree(sstr.str())});
+    };
+
+    vector<SyntaxTree> result;
+    if(in.isnode("slotbase")) result.push_back(in);
+    else if(in.isnode("slottuple"))
+    {
+        for(size_t i = 0; i < in.size(); i++)
+            for(auto tmp : NormaliseIDLVar(in[i], indices, collidx))
+                result.push_back(tmp);
+    }
+    else if(in.isnode("slotmember"))
+    {
+        for(auto tmp : NormaliseIDLVar(in[0], indices, collidx))
+            result.push_back({"slotmember", {tmp, in[1]}});
+    }
+    else if(in.isnode("slotindex"))
+    {
+        bool iscollidx = in[1].isnode("basevar") && !collidx.empty() && collidx.back() == in[1][0].get_leaf();
+        for(auto tmp : NormaliseIDLVar(in[0], indices, {collidx.begin(), collidx.end()-(iscollidx?1:0)}))
+            result.push_back({"slotindex", {tmp, iscollidx?in[1]:const_syntax(CollapseIDLIndex(in[1], indices))}});
+    }
+    else if(in.isnode("slotrange"))
+    {
+        int begin = CollapseIDLIndex(in[1], indices);
+        int end   = CollapseIDLIndex(in[2], indices);
+        for(int index = begin; index < end; index++)
+            for(auto tmp : NormaliseIDLVar(in[0], indices, collidx))
+                result.push_back({"slotindex", {tmp, const_syntax(index)}});
+    }
+    else throw string("Variable slot constraints invalid node type \""+in.get_type()+"\".");
+    return result;
 }
