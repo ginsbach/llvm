@@ -70,17 +70,10 @@ int main(int argc, char** argv)
             return string(istreambuf_iterator<char>(ifs), {});
         };
 
-        auto tmp1 = clock();
         auto parsed_bnf     = ParseBNF(read_whole_file(argv[1]));
-        auto tmp2 = clock();
         auto parse_result   = Parse(parsed_bnf, read_whole_file(argv[2]));
-        auto tmp3 = clock();
         auto exported_specs = ProcessIDLSpecs(parse_result);
-        auto tmp4 = clock();
         cout<<exported_specs;
-        cerr<<"Stopped seconds: "<<(double)(tmp2-tmp1)/(double)CLOCKS_PER_SEC
-                            <<" "<<(double)(tmp3-tmp2)/(double)CLOCKS_PER_SEC
-                            <<" "<<(double)(tmp4-tmp3)/(double)CLOCKS_PER_SEC<<"\n";
     }
     catch(string error)
     {
@@ -233,33 +226,30 @@ vector<SyntaxTree> SyntaxTree::children() &&
 class ParseBranch : public SyntaxTree
 {
 public:
-    using PotentialBranch = shared_ptr<ParseBranch>;
-    using TransitionRule  = function<PotentialBranch(const ParseBranch&)>;
-    using RetentionRule   = function<bool(const ParseBranch&)>;
-
     ParseBranch(SyntaxTree h, shared_ptr<ParseBranch> t) : SyntaxTree(h), tail(t) { }
-
-    static TransitionRule cont_lit_rule (string name, unordered_set<string> prev, string match);
-    static TransitionRule cont_ref_rule (string name, unordered_set<string> prev, string match);
-    static TransitionRule cont_str_rule (string name, unordered_set<string> prev);
-    static TransitionRule cont_nbr_rule (string name, unordered_set<string> prev);
-    static RetentionRule  retention_rule(unordered_set<string> prev,  unordered_set<string> match);
 
     bool operator==(const ParseBranch& o) const;
 
     operator vector<SyntaxTree>() &&;
 
+    bool tailtest(const unordered_set<string>&, bool allow_null=false) const;
+
+    ParseBranch fork(bool from_tail, bool keep_head, string name) const;
+
 private:
-    bool tailtest(const unordered_set<string>&) const;
-
-    shared_ptr<ParseBranch> fork(bool from_tail, bool keep_head, string name) const;
-
     shared_ptr<ParseBranch> tail;
+};
+
+// These two functors are used by the parser to apply grammar rules.
+struct ParserRules
+{
+    function<void(const ParseBranch&,vector<ParseBranch>&)>             fork_rule;
+    function<void(const ParseBranch&,vector<shared_ptr<ParseBranch>>&)> keep_rule;
 };
 
 // This function decomposes the parsed Backus-Naur form syntax description
 // into simple transition rules that are easily applied by the Parse function.
-pair<vector<ParseBranch::TransitionRule>,ParseBranch::RetentionRule> DecomposeBNF(vector<pair<string,SyntaxTree>> bnf);
+ParserRules DecomposeBNF(vector<pair<string,SyntaxTree>> bnf);
 
 // This is the actual parser. However, much of the heavy lifting has been
 // offloaded to the GrammarRules and ParseBranch classes.
@@ -292,37 +282,31 @@ vector<SyntaxTree> Parse(vector<pair<string,SyntaxTree>> bnf_spec, string input)
     auto grammar_rules = DecomposeBNF(bnf_spec);
 
     vector<shared_ptr<ParseBranch>> syntax_branches{nullptr};
-    vector<ParseBranch>             branch_workset;
-    vector<ParseBranch>             next_branch_workset;
-
     for(auto& token : tokens)
     {
-        branch_workset.clear();
+        vector<ParseBranch> branch_workset;
         for(auto& branch : syntax_branches)
             branch_workset.push_back(ParseBranch(SyntaxTree(token), move(branch)));
 
-        syntax_branches.clear();
+        vector<shared_ptr<ParseBranch>> next_syntax_branches;
         while(!branch_workset.empty())
         {
-            next_branch_workset.clear();
+            vector<ParseBranch> next_branch_workset;
             for(auto& branch : branch_workset)
             {
-                for(const auto& rule : grammar_rules.first)
-                    if(auto result = rule(branch))
-                        next_branch_workset.push_back(*result);
-
-                if(grammar_rules.second(branch) && !any_of(syntax_branches.begin(), syntax_branches.end(),
-                                                           [&branch](const auto& b) { return *b == branch; }))
-                    syntax_branches.push_back(shared_ptr<ParseBranch>(new ParseBranch(move(branch))));
+                grammar_rules.fork_rule(branch, next_branch_workset);
+                grammar_rules.keep_rule(branch, next_syntax_branches);
             }
 
-            swap(branch_workset, next_branch_workset);
+            branch_workset = move(next_branch_workset);
         }
 
-        if(syntax_branches.empty()) break;
+        if(next_syntax_branches.empty()) break;
+        syntax_branches = move(next_syntax_branches);
     }
 
-    if(syntax_branches.size() == 1) return move(*syntax_branches.front());
+    if(syntax_branches.size() == 1 && syntax_branches.front())
+        return move(*syntax_branches.front());
     else throw string("Parsing was ambivalent.");
 }
 
@@ -375,7 +359,7 @@ template<typename T> bool contains(const unordered_set<T>& S, const T& E) { retu
 
 // This function takes the parsed language specification and decomposes the
 // Backus-Naur form syntax rules into small, incremental transformation rules.
-pair<vector<ParseBranch::TransitionRule>,ParseBranch::RetentionRule> DecomposeBNF(vector<pair<string,SyntaxTree>> stack)
+ParserRules DecomposeBNF(vector<pair<string,SyntaxTree>> stack)
 {
     vector<tuple<string,unordered_set<string>,unordered_set<string>>> ref_rule;
     vector<tuple<string,unordered_set<string>,string>>                lit_rule;
@@ -389,12 +373,40 @@ pair<vector<ParseBranch::TransitionRule>,ParseBranch::RetentionRule> DecomposeBN
 
         using make_set = unordered_set<string>;
 
+        auto str_to_refsyntax = [](unordered_set<string> vec) {
+            vector<SyntaxTree> result;
+            for(const auto& x : vec) result.push_back(SyntaxTree("reference", {SyntaxTree(x)}));
+            return result;
+        };
+        auto extract_refsyntax = [](const vector<SyntaxTree>& vec) {
+            unordered_set<string> result;
+            for(const auto& x : vec) if(x.isnode("reference")) result.insert(x[0].get_leaf());
+            return result;
+        };
+        auto extract_non_refsyntax = [](vector<SyntaxTree> vec) {
+            vector<SyntaxTree> result;
+            for(auto& x : vec) if(!x.isnode("reference")) result.push_back(move(x));
+            return result;
+        };
+        auto sequence_cont = [str_to_refsyntax](unordered_set<string> prev, vector<SyntaxTree> s) {
+            s.insert(s.begin(), SyntaxTree("choice", str_to_refsyntax(prev)));
+            return SyntaxTree("sequence", s);
+        };
+
         if     (r.isnode("literal"))   lit_rule.emplace_back(l, make_set{}, r[0].get_leaf());
         else if(r.isnode("reference")) ref_rule.emplace_back(l, make_set{}, make_set{r[0].get_leaf()});
         else if(r.isnode("string"))    str_rule.emplace_back(l, make_set{});
         else if(r.isnode("number"))    nbr_rule.emplace_back(l, make_set{});
         else if(r.isnode("choice"))
-            for(auto& choice : move(r).children()) stack.push_back({l, choice});
+        {
+            auto children = move(r).children();
+                
+            auto refs = extract_refsyntax(children);
+            if(!refs.empty()) ref_rule.emplace_back(l, make_set{}, refs);
+
+            for(auto& choice : extract_non_refsyntax(children))
+                stack.push_back({l, move(choice)});
+        }
         else if(r.isnode("sequence"))
         {
             size_t counter = 0;
@@ -402,45 +414,20 @@ pair<vector<ParseBranch::TransitionRule>,ParseBranch::RetentionRule> DecomposeBN
             unordered_set<string> new_tmps;
             for(auto& part : move(r).children())
             {
-                if(old_tmps.empty() && part.isnode("reference"))
-                {
-                    old_tmps.insert(part[0].get_leaf());
-                    continue;
-                }
-
                 new_tmps.clear();
 
                 stringstream sstr;
                 sstr<<l<<"@"<<(counter++);
                 string name = sstr.str();
-            
-                auto sequence_cont = [](unordered_set<string> prev, vector<SyntaxTree> s)->SyntaxTree
+
+                if(part.isnode("choice") && old_tmps.empty())
                 {
-                    vector<SyntaxTree> refchoice_contents;
-                    for(const auto& v : prev)
-                        refchoice_contents.push_back(SyntaxTree("reference", {SyntaxTree(v)}));
+                    auto children = move(part).children();
 
-                    vector<SyntaxTree> sequence_contents{SyntaxTree("choice", refchoice_contents)};
+                    new_tmps.merge(extract_refsyntax(children));
 
-                    for(size_t l = 0; l < s.size(); l++)
-                        sequence_contents.push_back(s[l]);
-
-                    return SyntaxTree("sequence", sequence_contents);
-                };
-
-                if     (part.isnode("literal"))   lit_rule.emplace_back(name, old_tmps, part[0].get_leaf());
-                else if(part.isnode("reference")) ref_rule.emplace_back(name, old_tmps, make_set{part[0].get_leaf()});
-                else if(part.isnode("string"))    str_rule.emplace_back(name, old_tmps);
-                else if(part.isnode("number"))    nbr_rule.emplace_back(name, old_tmps);
-                else if(part.isnode("choice"))
-                {
-                    for(auto& choice : move(part).children())
-                    {
-                        if(old_tmps.empty() && choice.isnode("reference")) new_tmps.insert(choice[0].get_leaf());
-                        else if(old_tmps.empty())          stack.push_back({name, move(choice)});
-                        else if(choice.isnode("sequence")) stack.push_back({name, sequence_cont(old_tmps, move(choice).children())});
-                        else                               stack.push_back({name, sequence_cont(old_tmps, {move(choice)})});
-                    }
+                    for(auto& choice : extract_non_refsyntax(children))
+                        stack.push_back({name, move(choice)});
                 }
                 else if(part.isnode("optional") && !old_tmps.empty())
                 {
@@ -458,6 +445,27 @@ pair<vector<ParseBranch::TransitionRule>,ParseBranch::RetentionRule> DecomposeBN
 
                     new_tmps = move(old_tmps);
                 }
+                else if(part.isnode("literal"))
+                {
+                    auto find_it = find_if(lit_rule.begin(), lit_rule.end(),
+                                           [&](const auto& x) { return (get<1>(x) == old_tmps &&
+                                                                        get<2>(x) == part[0].get_leaf() &&
+                                                                        get<0>(x).find('@') != string::npos); });
+                    if(find_it != lit_rule.end()) name = get<0>(*find_it);
+                    else                          lit_rule.emplace_back(name, old_tmps, part[0].get_leaf());
+                }
+                else if(part.isnode("reference"))
+                {
+                    auto find_it = find_if(ref_rule.begin(), ref_rule.end(),
+                                           [&](const auto& x) { return (get<1>(x) == old_tmps &&
+                                                                        get<2>(x) == make_set{part[0].get_leaf()} &&
+                                                                        get<0>(x).find('@') != string::npos); });
+                    if(find_it != ref_rule.end()) name = get<0>(*find_it);
+                    else if(old_tmps.empty())     name = part[0].get_leaf();
+                    else                          ref_rule.emplace_back(name, old_tmps, make_set{part[0].get_leaf()});
+                }
+                else if(part.isnode("string")) str_rule.emplace_back(name, old_tmps);
+                else if(part.isnode("number")) nbr_rule.emplace_back(name, old_tmps);
                 else throw string("Failed to process BNF file, some sequence rule cannot be dissected fully.");
 
                 new_tmps.insert(name);
@@ -469,66 +477,45 @@ pair<vector<ParseBranch::TransitionRule>,ParseBranch::RetentionRule> DecomposeBN
         else throw string("Syntax Error in BNF file: No decomposition to break down complex rule.");
     }
 
-    vector<ParseBranch::TransitionRule> transition_rules;
-    unordered_set<string> types_with_ref_continue{"#"};
-    unordered_set<string> types_with_any_continue{"#"};
-    for(auto& rule : ref_rule)
-    {
-        for(auto x : get<2>(rule))
-            transition_rules.push_back(ParseBranch::cont_ref_rule(get<0>(rule), get<1>(rule), x));
-        types_with_ref_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
-        types_with_any_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
-    }
-    for(auto& rule : lit_rule)
-    {
-        transition_rules.push_back(ParseBranch::cont_lit_rule(get<0>(rule), get<1>(rule), get<2>(rule)));
-        types_with_any_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
-    }
-    for(auto& rule : str_rule)
-    {
-        transition_rules.push_back(ParseBranch::cont_str_rule(get<0>(rule), get<1>(rule)));
-        types_with_any_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
-    }
-    for(auto& rule : nbr_rule)
-    {
-        transition_rules.push_back(ParseBranch::cont_nbr_rule(get<0>(rule), get<1>(rule)));
-        types_with_any_continue.insert(get<1>(rule).begin(), get<1>(rule).end());
-    }
+    unordered_set<string> types_with_ref_cont{"#"};
+    unordered_set<string> types_with_any_cont{"#"};
+    for(const auto& rule : lit_rule) types_with_any_cont.insert(get<1>(rule).begin(), get<1>(rule).end());
+    for(const auto& rule : ref_rule) types_with_ref_cont.insert(get<1>(rule).begin(), get<1>(rule).end());
+    for(const auto& rule : ref_rule) types_with_any_cont.insert(get<1>(rule).begin(), get<1>(rule).end());
+    for(const auto& rule : str_rule) types_with_any_cont.insert(get<1>(rule).begin(), get<1>(rule).end());
+    for(const auto& rule : nbr_rule) types_with_any_cont.insert(get<1>(rule).begin(), get<1>(rule).end());
 
-    return {transition_rules, ParseBranch::retention_rule(types_with_ref_continue, types_with_any_continue)};
+    return {[=](const ParseBranch& b, vector<ParseBranch>& out) {
+        for(auto& rule : lit_rule)
+            if((get<1>(rule).empty() || b.tailtest(get<1>(rule))) && b.isleaf(get<2>(rule)))
+                out.emplace_back(b.fork(!get<1>(rule).empty(), false, get<0>(rule)));
+        for(auto& rule : ref_rule)
+            if((get<1>(rule).empty() || b.tailtest(get<1>(rule))) && b.isnode() && contains(get<2>(rule), b.get_type()))
+                out.emplace_back(b.fork(!get<1>(rule).empty(), true, get<0>(rule)));
+        for(auto& rule : str_rule)
+            if((get<1>(rule).empty() || b.tailtest(get<1>(rule))) && b.isleaf() && !isdigit(b.get_leaf()[0]))
+                out.emplace_back(b.fork(!get<1>(rule).empty(), true, get<0>(rule)));
+        for(auto& rule : nbr_rule)
+            if((get<1>(rule).empty() || b.tailtest(get<1>(rule))) && b.isleaf() && isdigit(b.get_leaf()[0]))
+                out.emplace_back(b.fork(!get<1>(rule).empty(), true, get<0>(rule)));
+    },
+    [=](const ParseBranch& b, vector<shared_ptr<ParseBranch>>& out) {
+        if(b.tailtest(types_with_ref_cont, true) && b.isnode() && contains(types_with_any_cont, b.get_type()))
+            out.push_back(shared_ptr<ParseBranch>(new ParseBranch(move(b))));
+    }};
 }
 
-// These member functions of ParseBranch are used to generate non-deterministic
-// rules that can be applied to the parse stack in order to combine syntax nodes.
-ParseBranch::TransitionRule ParseBranch::cont_lit_rule(string n, unordered_set<string> p, string m)
-    { return [=](const ParseBranch& b) { return ((p.empty() || b.tailtest(p)) && b.isleaf(m))
-                                                ?b.fork(!p.empty(), false, n):nullptr; }; }
-
-ParseBranch::TransitionRule ParseBranch::cont_ref_rule(string n, unordered_set<string> p, string m)
-    { return [=](const ParseBranch& b){ return ((p.empty() || b.tailtest(p)) && b.isnode(m))
-                                               ?b.fork(!p.empty(), true, n):nullptr; }; }
-
-ParseBranch::TransitionRule ParseBranch::cont_str_rule(string n, unordered_set<string> p)
-    { return [=](const ParseBranch& b){ return ((p.empty() || b.tailtest(p)) && b.isleaf() && !isdigit(b.get_leaf()[0]))
-                                               ?b.fork(!p.empty(), true, n):nullptr; }; }
-
-ParseBranch::TransitionRule ParseBranch::cont_nbr_rule(string n, unordered_set<string> p)
-    { return [=](const ParseBranch& b){ return ((p.empty() || b.tailtest(p)) && b.isleaf() && isdigit(b.get_leaf()[0]))
-                                               ?b.fork(!p.empty(), true, n):nullptr; }; }
-
-ParseBranch::RetentionRule ParseBranch::retention_rule(unordered_set<string> p,  unordered_set<string> m)
-    { return [=](const ParseBranch& b) { return (b.tail == nullptr || b.tailtest(p)) &&
-                                                 b.isnode() && contains(m, b.get_type()); }; }
-
-bool ParseBranch::tailtest(const unordered_set<string>& p) const
-    { return tail && tail->isnode() && contains(p, tail->get_type()); }
-
-shared_ptr<ParseBranch> ParseBranch::fork(bool from_tail, bool keep_head, string n) const
+bool ParseBranch::tailtest(const unordered_set<string>& p, bool allow_null) const
 {
-    if(from_tail && tail && keep_head) return make_shared<ParseBranch>(SyntaxTree(n, {*tail, *this}), tail->tail);
-    else if(from_tail && tail)         return make_shared<ParseBranch>(SyntaxTree(n, {*tail}),        tail->tail);
-    else if                (keep_head) return make_shared<ParseBranch>(SyntaxTree(n,        {*this}), tail);
-    else                               return make_shared<ParseBranch>(SyntaxTree(n,      {}),        tail);
+    return (allow_null && tail == nullptr) || (tail && tail->isnode() && contains(p, tail->get_type()));
+}
+
+ParseBranch ParseBranch::fork(bool from_tail, bool keep_head, string n) const
+{
+    if(from_tail && tail && keep_head) return ParseBranch(SyntaxTree(n, {*tail, *this}), tail->tail);
+    else if(from_tail && tail)         return ParseBranch(SyntaxTree(n, {*tail}),        tail->tail);
+    else if                (keep_head) return ParseBranch(SyntaxTree(n,        {*this}), tail);
+    else                               return ParseBranch(SyntaxTree(n,      {}),        tail);
 }
 
 // This is the first function that is specific to IDL. It eliminates certain
