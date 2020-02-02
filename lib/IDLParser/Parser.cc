@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <map>
 
 using namespace std;
 
@@ -355,7 +356,7 @@ ParseBranch::operator vector<SyntaxTree>() &&
 }
 
 // This is a workaround to allow building without enabling C++20 in the compiler.
-template<typename T> bool contains(const unordered_set<T>& S, const T& E) { return S.find(E) != S.end(); }
+template<class SType, class EType> bool contains(const SType& S, const EType& E) { return S.find(E) != S.end(); }
 
 // This function takes the parsed language specification and decomposes the
 // Backus-Naur form syntax rules into small, incremental transformation rules.
@@ -505,11 +506,13 @@ ParserRules DecomposeBNF(vector<pair<string,SyntaxTree>> stack)
     }};
 }
 
+// This function pattern matches on the fail of the branch.
 bool ParseBranch::tailtest(const unordered_set<string>& p, bool allow_null) const
 {
     return (allow_null && tail == nullptr) || (tail && tail->isnode() && contains(p, tail->get_type()));
 }
 
+// This function forks the branch in order to apply a syntax rule.
 ParseBranch ParseBranch::fork(bool from_tail, bool keep_head, string n) const
 {
     if(from_tail && tail && keep_head) return ParseBranch(SyntaxTree(n, {*tail, *this}), tail->tail);
@@ -524,6 +527,8 @@ SyntaxTree SimplifyIDLConstraint(SyntaxTree in, const unordered_map<string,Synta
                                  unordered_map<string,int> indices={}, vector<string> collidx = {},
                                  function<SyntaxTree(const SyntaxTree&)> renaming = nullptr);
 
+SyntaxTree FlattenIDLJunctions(SyntaxTree in);
+
 vector<SyntaxTree> ProcessIDLSpecs(const vector<SyntaxTree>& in_vector)
 {
     unordered_map<string,SyntaxTree> lookup;
@@ -534,7 +539,12 @@ vector<SyntaxTree> ProcessIDLSpecs(const vector<SyntaxTree>& in_vector)
     vector<SyntaxTree> result;
     for(size_t i = 0; i+1 < in_vector.size(); i++)
         if(in_vector[i+1].isnode("export") && in_vector[i].isnode("specification"))
-            result.push_back({"specification", {in_vector[i][0], SimplifyIDLConstraint(in_vector[i][1], lookup)}});
+        {
+            auto constraint = in_vector[i][1];
+            constraint      = SimplifyIDLConstraint(constraint, lookup);
+            constraint      = FlattenIDLJunctions(constraint);
+            result.push_back({"specification", {in_vector[i][0], constraint}});
+        }
 
     return result;
 }
@@ -548,95 +558,93 @@ SyntaxTree SimplifyIDLConstraint(SyntaxTree in, const unordered_map<string,Synta
                                 unordered_map<string,int> indices, vector<string> collidx,
                                 function<SyntaxTree(const SyntaxTree&)> renaming)
 {
-    if(in.isnode("atom"))
+    if(in.isnode("atom") && in.size() == 1)
     {
-        vector<SyntaxTree> processed_vars;
-        auto constraint = in[0];
-        for(size_t i = 0; i < constraint.size(); i++)
+        string             type     = in[0].get_type();
+        vector<SyntaxTree> children = move(move(in).children()[0]).children();
+
+        for(auto& child : children)
         {
-            if(SyntaxTree(constraint[i]).isleaf())
-            {
-                processed_vars.push_back(SyntaxTree(constraint[i].get_leaf()));
-                continue;
-            }
+            if(child.isleaf()) continue;
 
             vector<SyntaxTree> vars;
-            for(auto tmp : NormaliseIDLVar(constraint[i], indices, collidx))
+            for(auto tmp : NormaliseIDLVar(child, indices, collidx))
                 vars.push_back(renaming?renaming(tmp):tmp);
 
-            processed_vars.push_back((vars.size()==1)?vars.front():SyntaxTree("slottuple", vars));
-        }
-        in = SyntaxTree("atom", {SyntaxTree(in[0].get_type(), processed_vars)});
-    }
-    else if(in.isnode("conjunction") || in.isnode("disjunction"))
-    {
-        vector<SyntaxTree> elements;
-        for(size_t i = 0; i < in.size(); i++)
-        {
-            SyntaxTree el = SimplifyIDLConstraint(in[i], lookup, indices, collidx, renaming);
-
-            if(el.isnode(in.get_type()))
-            {
-                for(size_t j = 0; j < el.size(); j++)
-                    elements.push_back(el[j]);
-            }
-            else elements.push_back(el);
+            child = (vars.size()==1)?vars.front():SyntaxTree("slottuple", vars);
         }
 
-        in = (elements.size()==1)?elements.front():SyntaxTree(in.get_type(), elements);
+        return SyntaxTree("atom", {SyntaxTree(type, children)});
     }
     else if(in.isnode("conRange") || in.isnode("disRange"))
     {
         auto begin = CollapseIDLIndex(in[2], indices);
         auto end   = in.isnode("for")?(begin+1):CollapseIDLIndex(in[3], indices);
 
-        string type = in.get_type();
-        type.resize(3);
-        type += "junction";
+        string type = string(in.get_type().begin(), in.get_type().begin()+3)+"junction";
 
         vector<SyntaxTree> elements;
         for(int index = begin; index < end; index++)
         {
             indices[in[1].get_leaf()] = index;
-            SyntaxTree el = SimplifyIDLConstraint(in[0], lookup, indices, collidx, renaming);
-
-            if(el.isnode(type))
-            {
-                for(size_t j = 0; j < el.size(); j++)
-                    elements.push_back(el[j]);
-            }
-            else elements.push_back(el);
+            elements.push_back(SimplifyIDLConstraint(in[0], lookup, indices, collidx, renaming));
         }
 
-        in = (elements.size()==1)?elements.front():SyntaxTree(type, elements);
+        return SyntaxTree(type, elements);
     }
-    else if(in.isnode("default" )|| in.isnode("for"))
+    else if(in.isnode("conjunction") || in.isnode("disjunction"))
     {
-        auto index = CollapseIDLIndex(in[2], indices);
+        auto type = in.get_type();
 
-        auto find_it = in.isnode("for")?indices.end():indices.find(in[1].get_leaf());
-        if(find_it == indices.end())
-        {
-            indices[in[1].get_leaf()] = index;
-        }
+        vector<SyntaxTree> elements;
+        for(auto& child : move(in).children())
+            elements.push_back(SimplifyIDLConstraint(child, lookup, indices, collidx, renaming));
 
-        in = SimplifyIDLConstraint(in[0], lookup, indices, collidx, renaming);
+        return SyntaxTree(type, elements);
+    }
+    else if(in.isnode("for"))
+    {
+        indices[in[1].get_leaf()] = CollapseIDLIndex(in[2], indices);
+        return SimplifyIDLConstraint(in[0], lookup, indices, collidx, renaming);
+    }
+    else if(in.isnode("default" ))
+    {
+        if(!contains(indices, in[1].get_leaf()))
+            indices[in[1].get_leaf()] = CollapseIDLIndex(in[2], indices);
+
+        return SimplifyIDLConstraint(in[0], lookup, indices, collidx, renaming);
     }
     else if(in.isnode("rename"))
     {
-        auto print_var_recurs = [](const SyntaxTree& s, const auto& rec)->string
-        {
-            if(s.isnode("slotbase"))                                   return s[0].get_leaf();
-            else if(s.isnode("slotmember"))                            return rec(s[0], rec)+"."+s[1].get_leaf();
-            else if(s.isnode("slotindex") && s[1].isnode("basevar"))   return rec(s[0], rec)+"["+s[1][0].get_leaf()+"]";
-            else if(s.isnode("slotindex") && s[1].isnode("baseconst")) return rec(s[0], rec)+"["+s[1][0].get_leaf()+"]";
-            else throw string("Attempting to rename a variable that is not normalised \""+s.get_type()+"\".");
+        auto comp = [](const SyntaxTree& a, const SyntaxTree& b)->bool {
+            const SyntaxTree* it1 = &a;
+            const SyntaxTree* it2 = &b;
+            while(true) {
+                if(it1->get_type() < it2->get_type()) return true;
+                if(it1->get_type() > it2->get_type()) return false;
+
+                if(it1->isnode("slotbase"))
+                    return (*it1)[0].get_leaf() < (*it2)[0].get_leaf();
+                else if(it1->isnode("slotmember"))
+                {
+                    if((*it1)[1].get_leaf() < (*it2)[1].get_leaf()) return true;
+                    if((*it1)[1].get_leaf() > (*it2)[1].get_leaf()) return false;
+                }
+                else if(it1->isnode("slotindex") && ((*it1)[1].isnode("baseconst") || (*it1)[1].isnode("basevar"))
+                                                 && ((*it2)[1].isnode("baseconst") || (*it2)[1].isnode("basevar")))
+                {
+                    if((*it1)[1][0].get_leaf() < (*it2)[1][0].get_leaf()) return true;
+                    if((*it1)[1][0].get_leaf() > (*it2)[1][0].get_leaf()) return false;
+                }
+                else throw string("This shouldn't happen.");
+                it1 = &(*it1)[0];
+                it2 = &(*it2)[0];
+            }
         };
 
-        auto print_var = [=](const SyntaxTree& s)->string{ return print_var_recurs(s, print_var_recurs); };
+        map<SyntaxTree,SyntaxTree,decltype(comp)> rename(comp);
+        SyntaxTree                                prefix("");
 
-        unordered_map<string,SyntaxTree> rename;
-        SyntaxTree                       prefix("");
         for(size_t i = 1; i+1 < in.size(); i+=2)
         {
             auto tmp1 = NormaliseIDLVar(in[i+1], indices, collidx);
@@ -644,7 +652,7 @@ SyntaxTree SimplifyIDLConstraint(SyntaxTree in, const unordered_map<string,Synta
             if(tmp1.size() == tmp2.size())
             {
                 for(size_t j = 0; j < tmp1.size(); j++)
-                    rename.insert({print_var(tmp1[j]), tmp2[j]});
+                    rename.insert({tmp1[j], tmp2[j]});
             }
             else throw string("Rename of touples with unequal sizes is invalid.");
         }
@@ -656,70 +664,44 @@ SyntaxTree SimplifyIDLConstraint(SyntaxTree in, const unordered_map<string,Synta
             else throw string("Cannot prefix a tuple.");
         }
 
-        in = SimplifyIDLConstraint(in[0], lookup, indices, collidx,
-                                [renaming,&rename,&prefix,print_var](const SyntaxTree& var)
+        return SimplifyIDLConstraint(in[0], lookup, indices, collidx, [renaming,&rename,&prefix](const SyntaxTree& var)
         {
-            string printed = "."+print_var(var);
-            size_t len     =  printed.size();
+            auto apply = renaming?renaming:[](const SyntaxTree& x) { return x; };
 
-            SyntaxTree new_var = prefix;
-
-            while(len > 0)
+            const auto* it = &var;
+            while(true)
             {
-                auto find_it = rename.find(string(printed.begin()+1, printed.begin()+len));
+                auto find_it = rename.find(*it);
                 if(find_it != rename.end())
-                {
-                    new_var = find_it->second;
-                    break;
-                }
+                    return apply(find_it->second);
 
-                do len--;
-                while(printed[len] != '[' && printed[len] != '.');
+                if(it->isnode("slotbase"))
+                {
+                    if(prefix.isnode()) return apply(SyntaxTree("slotmember", {prefix, (*it)[0]}));
+                    else                return apply(*it);
+                }
+                else if(it->isnode("slotmember"))
+                    apply = [old=apply,member=(*it)[1]](const SyntaxTree& syntax)
+                        { return old(SyntaxTree("slotmember", {syntax, member})); };
+                else if(it->isnode("slotindex"))
+                    apply = [old=apply,index=(*it)[1]](const SyntaxTree& syntax)
+                        { return old(SyntaxTree("slotindex", {syntax, index})); };
+                else throw string("This shouldn't happen.");
+
+                it = &(*it)[0];
             }
-
-            if(!new_var.isnode())
-                return renaming?renaming(var):SyntaxTree(var);
-
-            while(len < printed.size())
-            {
-                size_t next_len = len+1;
-                if(printed[len] == '[')
-                {
-                    while(next_len < printed.size() && printed[next_len] != ']') next_len++;
-                    string new_str(printed.begin()+len+1, printed.begin()+next_len);
-
-                    if(new_str.empty() || !isdigit(new_str[0]))
-                        new_var = SyntaxTree("slotindex", {new_var, SyntaxTree("basevar", {SyntaxTree(new_str)})});
-                    else
-                        new_var = SyntaxTree("slotindex", {new_var, SyntaxTree("baseconst", {SyntaxTree(new_str)})});
-
-                    len = (next_len < printed.size())?(next_len+1):next_len;
-                }
-                else if(printed[len] == '.')
-                {
-                    while(next_len < printed.size() && printed[next_len] != '[' && printed[next_len] != '.') next_len++;
-                    string new_str(printed.begin()+len+1, printed.begin()+next_len);
-
-                    new_var = SyntaxTree("slotmember", {new_var, SyntaxTree(new_str)});
-
-                    len = next_len;
-                }
-                else throw string("Impossible variable.");
-            }
-
-            return renaming?renaming(new_var):new_var;
         });
     }
     else if(in.isnode("collect"))
     {
         collidx.push_back(in[0].get_leaf());
-        in = SyntaxTree("collect", {in[0], in[1], SimplifyIDLConstraint(in[2], lookup, indices, collidx, renaming)});
+        return SyntaxTree("collect", {in[0], in[1], SimplifyIDLConstraint(in[2], lookup, indices, collidx, renaming)});
     }
     else if(in.isnode("if"))
     {
         auto index1 = CollapseIDLIndex(in[0], indices);
         auto index2 = CollapseIDLIndex(in[1], indices);
-        in = SimplifyIDLConstraint(in[(index1 == index2)?2:3], lookup, indices, collidx, renaming);
+        return SimplifyIDLConstraint(in[(index1 == index2)?2:3], lookup, indices, collidx, renaming);
     }
     else if(in.isnode("include"))
     {
@@ -732,10 +714,35 @@ SyntaxTree SimplifyIDLConstraint(SyntaxTree in, const unordered_map<string,Synta
         auto find_it = lookup.find(in[0].get_leaf());
         if(find_it == lookup.end())
             throw string("Included specification \""+in[0].get_leaf()+"\" does not exist.\n");
-        in = SimplifyIDLConstraint(find_it->second, lookup, new_indices, collidx, renaming);
+        return SimplifyIDLConstraint(find_it->second, lookup, new_indices, collidx, renaming);
     }
     else throw string("Constraint formula constraints invalid node type \""+in.get_type()+"\".");
-    return in;
+}
+
+SyntaxTree FlattenIDLJunctions(SyntaxTree in)
+{
+    if(in.isnode("conjunction") || in.isnode("disjunction"))
+    {
+        vector<SyntaxTree> elements;
+        for(size_t i = 0; i < in.size(); i++)
+        {
+            SyntaxTree el = in[i];
+
+            if(el.isnode(in.get_type()))
+            {
+                for(size_t j = 0; j < el.size(); j++)
+                    elements.push_back(el[j]);
+            }
+            else elements.push_back(el);
+        }
+
+        return (elements.size()==1)?elements.front():SyntaxTree(in.get_type(), elements);
+    }
+    else if(in.isnode("collect"))
+    {
+        return SyntaxTree("collect", {in[0], in[1], FlattenIDLJunctions(in[2])});
+    }
+    else return in;
 }
 
 int CollapseIDLIndex(SyntaxTree in, const unordered_map<string,int>& vars)
