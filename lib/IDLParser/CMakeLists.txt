@@ -6,7 +6,7 @@ add_llvm_library(LLVMIDLParser
   intrinsics_gen
 )
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 add_executable(idl_parser
     Parser.cc
 )
