@@ -8,6 +8,268 @@
 
 using namespace std;
 
+struct ProgramPart
+{
+    vector<string>     header;
+    string             main_content;
+    map<string,string> extra_content;
+};
+
+vector<ProgramPart> SplitCodeParts(string input);
+
+void               GenerateIDLSpecs          (vector<ProgramPart> parts);
+void               GenerateHarnessInterfaces (vector<ProgramPart> parts);
+void               GenerateNaiveHarnesses    (vector<ProgramPart> parts);
+map<string,string> GenerateMarshallingCpp    (vector<ProgramPart> parts);
+void               GenerateSpecifiedHarnesses(vector<ProgramPart> parts);
+
+void parse_program(vector<ProgramPart> input);
+
+int main()
+{
+    try {
+        auto parts = SplitCodeParts(string(istreambuf_iterator<char>(cin), {}));
+        GenerateIDLSpecs           (parts);
+        GenerateHarnessInterfaces  (parts);
+        GenerateNaiveHarnesses     (parts);
+        GenerateSpecifiedHarnesses (parts);
+    }
+    catch(string error) {
+        std::cerr<<"Error: "<<error<<std::endl;
+        return 1;
+    }
+    return 0;
+}
+
+vector<string> split_by(string input, char s);
+string         indent  (string input, size_t n);
+
+struct LiLACWhat
+{
+    LiLACWhat() {}
+    LiLACWhat(string t) : type(t) {}
+    LiLACWhat(string t, string c): type(t), content{c} {}
+    LiLACWhat(string t, vector<LiLACWhat> c): type(t), child{c} {}
+
+    bool operator==(const LiLACWhat& other) const
+        { return type == other.type && content == other.content && child == other.child; }
+
+    string type;
+    string content;
+    vector<LiLACWhat> child;
+};
+
+LiLACWhat parse_lilacwhat(string str);
+
+vector<pair<string,string>> capture_arguments(const LiLACWhat& what);
+
+string generate_naive_impl(const LiLACWhat& what, string pad="");
+
+string print_harness(string name, vector<pair<string,string>> args, string body,
+                     string global_body="", string namespace_body="", string functor_body="");
+
+
+string generate_idl(const LiLACWhat& what);
+
+struct CapturedRange
+{
+    string type;
+    string name;
+    string kind;
+    string array;
+    string range_size;
+};
+
+CapturedRange parse_marshalling(string input);
+
+void GenerateIDLSpecs(vector<ProgramPart> parts)
+{
+    for(auto& part : parts)
+    {
+        if(part.header.size() == 2 && part.header[0] == "COMPUTATION" && part.extra_content.empty())
+        {
+            auto what = parse_lilacwhat(part.main_content);
+            auto args = capture_arguments(what);
+
+            auto string_toupper = [](string s) ->string{
+                transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return toupper(c); });
+                return s;
+            };
+
+            ofstream ofs(part.header[1]+".idl");
+            ofs<<"Export\nConstraint "+string_toupper(part.header[1])+"\n"+generate_idl(what)+"\nEnd\n";
+        }
+    }
+}
+
+void GenerateHarnessInterfaces(vector<ProgramPart> parts)
+{
+    for(auto& part : parts)
+    {
+        if(part.header.size() == 2 && part.header[0] == "COMPUTATION" && part.extra_content.empty())
+        {
+            auto what = parse_lilacwhat(part.main_content);
+            auto args = capture_arguments(what);
+
+            auto string_toupper = [](string s) ->string{
+                transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return toupper(c); });
+                return s;
+            };
+
+            ofstream ofs(part.header[1]+"_interface.cc");
+            ofs<<"{\""+string_toupper(part.header[1])+"\", [](const Solution& s)->Value*{ return s[\"for\"][0][\"comparison\"]; },\n"
+                 "[](Function& function, Solution solution) {\n"
+                 "    replace_idiom(function, solution, \""+part.header[1]+"_harness\", solution[\"for\"][0][\"successor\"],\n"
+                 "                  {";
+            bool first = true;
+            for(auto& arg : args)
+            {
+                if(!first) ofs<<",\n                   ";
+                if(arg.first == "double*" || arg.first == "int*")
+                    ofs<<"solution[\""<<arg.second<<"\"][\"base_pointer\"]";
+                else
+                    ofs<<"solution[\""<<arg.second<<"\"]";
+                first = false;
+            }
+            ofs<<"},\n"
+                 "                  {solution[\"output\"][\"store\"]}); }},\n";
+        }
+    }
+}
+
+void GenerateNaiveHarnesses(vector<ProgramPart> parts)
+{
+    for(auto& part : parts)
+    {
+        if(part.header.size() == 2 && part.header[0] == "COMPUTATION" && part.extra_content.empty())
+        {
+            auto what = parse_lilacwhat(part.main_content);
+            auto args = capture_arguments(what);
+
+            ofstream ofs(part.header[1]+"_naive.cc");
+            ofs<<print_harness(part.header[1], args, generate_naive_impl(what));
+        }
+    }
+}
+
+map<string,string> GenerateMarshallingCpp(vector<ProgramPart> parts)
+{
+    map<string,string> result;
+    for(auto& part : parts)
+    {
+        if(part.header.size() == 2 && (part.header[0] == "READABLE" || part.header[0] == "WRITEABLE"))
+        {
+            string code = "template<typename type_in, typename type_out>\n"
+                          "void "+part.header[1]+"_update(type_in* in, int size, type_out& out) {\n"
+                          +indent(part.main_content, 4)+
+                          "}\n\n";
+
+            if(!part.extra_content["BeforeFirstExecution"].empty())
+            {
+                code += "template<typename type_in, typename type_out>\n"
+                        "void "+part.header[1]+"_construct(int size, type_out& out) {\n"
+                        +indent(part.extra_content["BeforeFirstExecution"], 4)+
+                        "}\n\n";
+            }
+
+            if(!part.extra_content["AfterLastExecution"].empty())
+            {
+                code += "template<typename type_in, typename type_out>\n"
+                        "void "+part.header[1]+"_destruct(int size, type_out& out) {\n"
+                        +indent(part.extra_content["AfterLastExecution"], 4)+
+                        "}\n\n";
+            } 
+
+            string base_class = (part.header[0] == "READABLE")?"ReadObject":"WriteObject";
+
+            code += "template<typename type_in, typename type_out>\n"
+                    "using "+part.header[1]+" = "+base_class+"<type_in, type_out,\n"
+                    "    "+part.header[1]+"_update<type_in,type_out>,\n";
+
+            if(part.extra_content["BeforeFirstExecution"].empty())
+                 code += "    nullptr,\n";
+            else code += "    "+part.header[1]+"_construct<type_in,type_out>,\n";
+
+            if(part.extra_content["AfterLastExecution"].empty())
+                 code += "    nullptr>;\n\n";
+            else code += "    "+part.header[1]+"_destruct<type_in,type_out>>;\n\n";
+
+            result[part.header[1]] = code;
+        }
+    }
+    return result;
+}
+
+void GenerateSpecifiedHarnesses(vector<ProgramPart> parts)
+{
+    map<string,vector<pair<string,string>>> interface_dict;
+    map<string,string>                      marshalling_dict = GenerateMarshallingCpp(parts);
+
+    for(auto& part : parts)
+    {
+        if(part.header.size() == 2 && part.header[0] == "COMPUTATION" && part.extra_content.empty())
+        {
+            auto what = parse_lilacwhat(part.main_content);
+            auto args = capture_arguments(what);
+
+            interface_dict[part.header[1]] = args;
+        }
+    }
+
+    for(auto& part : parts)
+    {
+        if(part.header.size() == 4 && part.header[0] == "HARNESS")
+        {
+            ofstream ofs(part.header[3]+"_"+part.header[1]+".cc");
+
+            auto arguments = interface_dict[part.header[3]];
+            auto elemtype = [&arguments](const string s)->string{
+                for(const auto& arg : arguments)
+                    if(arg.second == s && !arg.first.empty() && arg.first.back() == '*')
+                        return {arg.first.begin(), arg.first.end()-1};
+                return {};
+            };
+
+            string functor_body, inner_code;
+
+            if(!part.extra_content["BeforeFirstExecution"].empty())
+            {
+                functor_body += "Functor() {\n"
+                                +indent(part.extra_content["BeforeFirstExecution"], 4)+
+                                "}\n\n";
+            }
+            if(!part.extra_content["AfterLastExecution"].empty())
+            {
+                functor_body += "~Functor() {\n"
+                                +indent(part.extra_content["AfterLastExecution"], 4)+
+                                "}\n\n";
+            }
+
+            for(const auto& line : split_by(part.extra_content["PersistentVariables"], '\n'))
+                functor_body += line+";\n";
+
+            vector<string> used_marsh;
+            for(const auto& line : split_by(part.extra_content["OnDemandEvaluated"], '\n'))
+            {
+                auto marsh = parse_marshalling(line);
+                inner_code   += "auto "+marsh.name+" = shadow_"+marsh.name+"("+marsh.array+", "+marsh.range_size+");\n";
+                functor_body += marsh.kind+"<"+elemtype(marsh.array)+","+marsh.type+"> shadow_"+marsh.name+";\n";
+
+                if(find(used_marsh.begin(), used_marsh.end(), marsh.kind) == used_marsh.end())
+                    used_marsh.push_back(marsh.kind);
+            }
+
+            string namespace_body;
+            for(const auto& marsh : used_marsh)
+                namespace_body += marshalling_dict[marsh];
+
+            ofs<<print_harness(part.header[3], arguments, inner_code+part.main_content,
+                               part.extra_content["CppHeaderFiles"], namespace_body, functor_body);
+            ofs.close();
+        }
+    }
+}
+
 vector<string> split_by(string input, char s)
 {
     vector<string> list;
@@ -25,79 +287,65 @@ vector<string> split_by(string input, char s)
     return list;
 }
 
+string indent(string input, size_t n)
+{
+    string result = string(n, ' ');
+    for(size_t i = 0; i <= input.size(); i++)
+    {
+        if(i == input.size() || input[i] == '\n')
+            while(!result.empty() && isspace(result.back()) && result.back() != '\n')
+                result.pop_back();
+        if(i < input.size()) result.push_back(input[i]);
+        if(i < input.size() && input[i] == '\n') result += string(n, ' ');
+    }
+    return result;
+}
+
 struct ProgramSegment
 {
     vector<string> header;
     vector<string> content;
 };
 
-vector<ProgramSegment> parse_segments(string input)
+vector<ProgramPart> SplitCodeParts(string input)
 {
     auto line_list = split_by(input, '\n');
 
-    vector<ProgramSegment> result;
+    vector<pair<vector<string>,vector<string>>> segment_list;
     for(size_t i = 0; i < line_list.size(); i++)
     {
         if(line_list[i].empty()) continue;
 
-        ProgramSegment segment;
-        segment.header = split_by(line_list[i], ' ');
+        vector<string> header = split_by(line_list[i], ' ');
 
+        vector<string> content;
         for(; i+1 < line_list.size() && (line_list[i+1].empty() ||
               (line_list[i+1].size() > 2 && line_list[i+1][0] == ' ' && line_list[i+1][1] == ' ')); i++)
         {
-            segment.content.push_back(string(line_list[i+1].begin()+2, line_list[i+1].end()));
+            content.push_back(string(line_list[i+1].begin()+2, line_list[i+1].end()));
         }
 
-        result.push_back(move(segment));
+        segment_list.push_back({move(header), move(content)});
     }
-
-    return result;
-}
-
-struct ProgramPart
-{
-    vector<string> header;
-    string main_content;
-    map<string,string> extra_content;
-};
-
-vector<ProgramPart> parse_parts(string input)
-{
-    auto segment_list = parse_segments(input);
 
     vector<ProgramPart> result;
     for(size_t i = 0; i < segment_list.size(); i++)
     {
         ProgramPart part;
-        part.header = move(segment_list[i].header);
-        for(auto& line : segment_list[i].content)
+        part.header = move(segment_list[i].first);
+        for(auto& line : segment_list[i].second)
             part.main_content += move(line)+"\n";
 
-        for(; i+1 < segment_list.size() && segment_list[i+1].header.size() == 1; i++)
+        for(; i+1 < segment_list.size() && segment_list[i+1].first.size() == 1; i++)
         {
-            for(auto& line : segment_list[i+1].content)
-                 part.extra_content[segment_list[i+1].header[0]] += move(line)+"\n";
+            for(auto& line : segment_list[i+1].second)
+                 part.extra_content[segment_list[i+1].first[0]] += move(line)+"\n";
         }
         result.push_back(move(part));
     }
+
     return result;
 }
-
-struct LiLACWhat
-{
-    LiLACWhat() {}
-    LiLACWhat(string t) : type(t) {}
-    LiLACWhat(string t, string c): type(t), content{c} {}
-    LiLACWhat(string t, vector<LiLACWhat> c): type(t), child{c} {}
-
-    bool operator==(const LiLACWhat& other) const
-        { return type == other.type && content == other.content && child == other.child; }
-
-    string type;
-    string content;
-    vector<LiLACWhat> child;
-};
 
 LiLACWhat parse_lilacwhat(string str)
 {
@@ -158,15 +406,6 @@ LiLACWhat parse_lilacwhat(string str)
     throw "Syntax error in LiLAC-What.\n"+error_string;
 }
 
-struct CapturedRange
-{
-    string type;
-    string name;
-    string kind;
-    string array;
-    string range_size;
-};
-
 CapturedRange parse_marshalling(string input)
 {
     if(!input.empty() && input.back() == ']')
@@ -197,7 +436,7 @@ CapturedRange parse_marshalling(string input)
     throw string("Syntax error on marshaling line \""+input+"\".");
 }
 
-string generate_naive_impl(const LiLACWhat& what, string pad="")
+string generate_naive_impl(const LiLACWhat& what, string pad)
 {
     if(what.type == "s") return what.content;
     else if(what.type == "index" && what.child.size() == 2)
@@ -421,22 +660,8 @@ string generate_idl(const LiLACWhat& what)
     return code+")";
 }
 
-string indent(string input, size_t n)
-{
-    string result = string(n, ' ');
-    for(size_t i = 0; i <= input.size(); i++)
-    {
-        if(i == input.size() || input[i] == '\n')
-            while(!result.empty() && isspace(result.back()) && result.back() != '\n')
-                result.pop_back();
-        if(i < input.size()) result.push_back(input[i]);
-        if(i < input.size() && input[i] == '\n') result += string(n, ' ');
-    }
-    return result;
-}
-
 string print_harness(string name, vector<pair<string,string>> args, string body,
-                     string global_body="", string namespace_body="", string functor_body="")
+                     string global_body, string namespace_body, string functor_body)
 {
     string type_interface, notp_interface;
     for(const auto& arg : args)
@@ -462,160 +687,4 @@ string print_harness(string name, vector<pair<string,string>> args, string body,
            "    static Functor functor;\n"
            "    functor("+notp_interface+");\n"
            "}\n";
-}
-
-void parse_program(string input)
-{
-    auto parts = parse_parts(input);
-
-    map<string,vector<pair<string,string>>> interface_dict;
-    map<string,string>                      marshalling_dict;
-
-    for(auto& part : parts)
-    {
-        if(part.header.size() == 2 && part.header[0] == "COMPUTATION" && part.extra_content.empty())
-        {
-            auto what = parse_lilacwhat(part.main_content);
-            auto args = capture_arguments(what);
-
-            interface_dict[part.header[1]] = args;
-
-            auto string_toupper = [](string s) ->string{
-                transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return toupper(c); });
-                return s;
-            };
-
-            ofstream ofs(part.header[1]+"_interface.cc");
-            ofs<<"{\""+string_toupper(part.header[1])+"\", [](const Solution& s)->Value*{ return s[\"for\"][0][\"comparison\"]; },\n"
-                 "[](Function& function, Solution solution) {\n"
-                 "    replace_idiom(function, solution, \""+part.header[1]+"_harness\", solution[\"for\"][0][\"successor\"],\n"
-                 "                  {";
-            bool first = true;
-            for(auto& arg : args)
-            {
-                if(!first) ofs<<",\n                   ";
-                if(arg.first == "double*" || arg.first == "int*")
-                    ofs<<"solution[\""<<arg.second<<"\"][\"base_pointer\"]";
-                else
-                    ofs<<"solution[\""<<arg.second<<"\"]";
-                first = false;
-            }
-            ofs<<"},\n"
-                 "                  {solution[\"output\"][\"store\"]}); }},\n";
-            ofs.close();
-
-            ofs.open(part.header[1]+"_naive.cc");
-            ofs<<print_harness(part.header[1], args, generate_naive_impl(what));
-            ofs.close();
-
-            ofs.open(part.header[1]+".idl");
-            ofs<<"Export\nConstraint "+string_toupper(part.header[1])+"\n"+generate_idl(what)+"\nEnd\n";
-            ofs.close();
-        }
-
-        if(part.header.size() == 2 && (part.header[0] == "READABLE" || part.header[0] == "WRITEABLE"))
-        {
-            string code = "template<typename type_in, typename type_out>\n"
-                          "void "+part.header[1]+"_update(type_in* in, int size, type_out& out) {\n"
-                          +indent(part.main_content, 4)+
-                          "}\n\n";
-
-            if(!part.extra_content["BeforeFirstExecution"].empty())
-            {
-                code += "template<typename type_in, typename type_out>\n"
-                        "void "+part.header[1]+"_construct(int size, type_out& out) {\n"
-                        +indent(part.extra_content["BeforeFirstExecution"], 4)+
-                        "}\n\n";
-            }
-
-            if(!part.extra_content["AfterLastExecution"].empty())
-            {
-                code += "template<typename type_in, typename type_out>\n"
-                        "void "+part.header[1]+"_destruct(int size, type_out& out) {\n"
-                        +indent(part.extra_content["AfterLastExecution"], 4)+
-                        "}\n\n";
-            } 
-
-            string base_class = (part.header[0] == "READABLE")?"ReadObject":"WriteObject";
-
-            code += "template<typename type_in, typename type_out>\n"
-                    "using "+part.header[1]+" = "+base_class+"<type_in, type_out,\n"
-                    "    "+part.header[1]+"_update<type_in,type_out>,\n";
-
-            if(part.extra_content["BeforeFirstExecution"].empty())
-                 code += "    nullptr,\n";
-            else code += "    "+part.header[1]+"_construct<type_in,type_out>,\n";
-
-            if(part.extra_content["AfterLastExecution"].empty())
-                 code += "    nullptr>;\n\n";
-            else code += "    "+part.header[1]+"_destruct<type_in,type_out>>;\n\n";
-
-            marshalling_dict[part.header[1]] = code;
-        }
-    }
-
-    for(auto& part : parts)
-    {
-        if(part.header.size() == 4 && part.header[0] == "HARNESS")
-        {
-            ofstream ofs(part.header[3]+"_"+part.header[1]+".cc");
-
-            auto arguments = interface_dict[part.header[3]];
-            auto elemtype = [&arguments](const string s)->string{
-                for(const auto& arg : arguments)
-                    if(arg.second == s && !arg.first.empty() && arg.first.back() == '*')
-                        return {arg.first.begin(), arg.first.end()-1};
-                return {};
-            };
-
-            string functor_body, inner_code;
-
-            if(!part.extra_content["BeforeFirstExecution"].empty())
-            {
-                functor_body += "Functor() {\n"
-                                +indent(part.extra_content["BeforeFirstExecution"], 4)+
-                                "}\n\n";
-            }
-            if(!part.extra_content["AfterLastExecution"].empty())
-            {
-                functor_body += "~Functor() {\n"
-                                +indent(part.extra_content["AfterLastExecution"], 4)+
-                                "}\n\n";
-            }
-
-            for(const auto& line : split_by(part.extra_content["PersistentVariables"], '\n'))
-                functor_body += line+";\n";
-
-            vector<string> used_marsh;
-            for(const auto& line : split_by(part.extra_content["OnDemandEvaluated"], '\n'))
-            {
-                auto marsh = parse_marshalling(line);
-                inner_code   += "auto "+marsh.name+" = shadow_"+marsh.name+"("+marsh.array+", "+marsh.range_size+");\n";
-                functor_body += marsh.kind+"<"+elemtype(marsh.array)+","+marsh.type+"> shadow_"+marsh.name+";\n";
-
-                if(find(used_marsh.begin(), used_marsh.end(), marsh.kind) == used_marsh.end())
-                    used_marsh.push_back(marsh.kind);
-            }
-
-            string namespace_body;
-            for(const auto& marsh : used_marsh)
-                namespace_body += marshalling_dict[marsh];
-
-            ofs<<print_harness(part.header[3], arguments, inner_code+part.main_content,
-                               part.extra_content["CppHeaderFiles"], namespace_body, functor_body);
-            ofs.close();
-        }
-    }
-}
-
-int main()
-{
-    try {
-        parse_program(string(istreambuf_iterator<char>(cin), {}));
-    }
-    catch(string error) {
-        std::cerr<<"Error: "<<error<<std::endl;
-        return 1;
-    }
-    return 0;
 }

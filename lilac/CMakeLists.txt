@@ -1,5 +1,7 @@
+
+set(CMAKE_CXX_STANDARD 17)
 add_executable(lilac_parser
-    lilac_parser.cc
+    Parser.cc
 )
 
 add_library(gemm_naive SHARED
