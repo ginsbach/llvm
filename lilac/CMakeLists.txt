@@ -1,17 +1,17 @@
 add_library(gemm_naive SHARED
-    gemm_naive.cc
+    ${CMAKE_CURRENT_BINARY_DIR}/gemm_naive.cc
 )
 
 add_library(spmv_csr_naive SHARED
-    spmv_csr_naive.cc
+    ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr_naive.cc
 )
 
 add_library(spmv_jds_naive SHARED
-    spmv_jds_naive.cc
+    ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds_naive.cc
 )
 
 add_library(gemm_openblas SHARED
-    gemm_openblas.cc
+    ${CMAKE_CURRENT_BINARY_DIR}/gemm_openblas.cc
 )
 
 target_link_libraries(gemm_openblas openblas)
@@ -22,19 +22,26 @@ add_executable(lilac_parser
 )
 
 add_custom_target(lilac-idl
-                  DEPENDS Idioms.idl
-                  DEPENDS spmv_jds_naive spmv_jds_naive gemm_naive gemm_openblas)
+                  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
+                          spmv_jds_naive
+                          spmv_jds_naive
+                          gemm_naive
+                          gemm_openblas)
 
 add_custom_target(lilac-replacer-code
                   DEPENDS CustomPassReplacerLiLACGenerated.h
 )
 add_custom_command(OUTPUT  CustomPassReplacerLiLACGenerated.h
                    COMMAND cat gemm_replacer.h spmv_csr_replacer.h spmv_jds_replacer.h > CustomPassReplacerLiLACGenerated.h
-                   DEPENDS gemm_replacer.h spmv_csr_replacer.h spmv_jds_replacer.h
+                   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/gemm_replacer.h
+                           ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr_replacer.h
+                           ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds_replacer.h
 )
 add_custom_command(OUTPUT  Idioms.idl
                    COMMAND cat gemm.idl spmv_csr.idl spmv_jds.idl > Idioms.idl
-                   DEPENDS gemm.idl spmv_csr.idl spmv_jds.idl
+                   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/gemm.idl
+                           ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr.idl
+                           ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds.idl
                    COMMENT "Concatenate idioms")
 
 add_custom_command(OUTPUT  spmv_csr_replacer.h spmv_csr_naive.cc spmv_csr_mkl.cc spmv_csr_cuda.cc spmv_csr.idl

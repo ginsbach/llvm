@@ -10,6 +10,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <iostream>
 
 using namespace llvm;
 
@@ -98,11 +99,11 @@ char ResearchReplacerBase::ID = 0;
 void replace_idiom(Function& function, Solution solution, std::string harness_name,
                    Value* insertion, std::vector<Value*> variables, std::vector<Value*> removeeffects)
 {
-    return;
     Instruction* insertion_point = dyn_cast_or_null<Instruction>(insertion);
 
     std::vector<Value*> variable_values;
     std::vector<Type*>  variable_types;
+    size_t i = 0;
     for(auto value : variables)
     {
         if(value)
@@ -110,6 +111,8 @@ void replace_idiom(Function& function, Solution solution, std::string harness_na
             variable_values.push_back(value);
             variable_types.push_back(value->getType());
         }
+        else std::cerr<<harness_name<<" argument "<<i<<" is zero!\n";
+        i++;
     }
 
     FunctionType* func_type = FunctionType::get(Type::getVoidTy(function.getContext()), variable_types, false);
@@ -121,7 +124,7 @@ void replace_idiom(Function& function, Solution solution, std::string harness_na
     {
         if(auto inst = dyn_cast_or_null<Instruction>(value))
         {
-            inst->removeFromParent();
+            inst->eraseFromParent();
         }
     }
 }
