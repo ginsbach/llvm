@@ -272,6 +272,11 @@ vector<SyntaxTree> Parse(vector<pair<string,SyntaxTree>> bnf_spec, string input)
                 tokens.rbegin()[1] = "..";
                 continue;
             }
+            if(c == '>' && tokens.size() > 2 && tokens.back().empty() && tokens.rbegin()[1]=="-")
+            {
+                tokens.rbegin()[1] = "->";
+                continue;
+            }
             if(tokens.back().empty()) tokens.back().push_back(c);
             else tokens.push_back({c});
             tokens.push_back({});
@@ -302,8 +307,8 @@ vector<SyntaxTree> Parse(vector<pair<string,SyntaxTree>> bnf_spec, string input)
             branch_workset = move(next_branch_workset);
         }
 
-        if(next_syntax_branches.empty()) break;
         syntax_branches = move(next_syntax_branches);
+        if(syntax_branches.empty()) break;
     }
 
     if(syntax_branches.size() == 1 && syntax_branches.front())
