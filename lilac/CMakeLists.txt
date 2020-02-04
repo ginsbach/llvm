@@ -32,7 +32,7 @@ add_custom_command(
 )
 
 add_library(gemm_naive SHARED
-    ${CMAKE_CURRENT_BINARY_DIR}/gemm_naive.cc
+  ${CMAKE_CURRENT_BINARY_DIR}/gemm_naive.cc
 )
 
 add_library(gemm_openblas SHARED

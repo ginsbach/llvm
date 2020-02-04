@@ -127,6 +127,18 @@ void GenerateHarnessInterfaces(vector<ProgramPart> parts)
                 if(!first) ofs<<",\n                   ";
                 if(arg.first == "double*" || arg.first == "int*")
                     ofs<<"solution[\""<<arg.second<<"\"][\"base_pointer\"]";
+                else if((what.type == "loop" || what.type == "map" || what.type == "dot") &&
+                        arg.second == what.child[1].content)
+                    ofs<<"solution[\"outer_loop\"][\"iter_end\"]";
+                else if(what.type == "loop" && what.child[3].type == "map" &&
+                        arg.second == what.child[3].child[1].content)
+                    ofs<<"solution[\"map_loop\"][\"iter_end\"]";
+                else if(what.type == "map" && what.child[4].type == "dot" &&
+                        arg.second == what.child[4].child[1].content)
+                    ofs<<"solution[\"dot_loop\"][\"iter_end\"]";
+                else if(what.type == "loop" && what.child[3].type == "map" && what.child[3].child[4].type == "dot" &&
+                        arg.second == what.child[3].child[4].child[1].content)
+                    ofs<<"solution[\"dot_loop\"][\"iter_end\"]";
                 else
                     ofs<<"solution[\""<<arg.second<<"\"]";
                 first = false;
