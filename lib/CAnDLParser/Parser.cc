@@ -307,8 +307,8 @@ vector<SyntaxTree> Parse(vector<pair<string,SyntaxTree>> bnf_spec, string input)
             branch_workset = move(next_branch_workset);
         }
 
-        if(next_syntax_branches.empty()) break;
         syntax_branches = move(next_syntax_branches);
+        if(syntax_branches.empty()) break;
     }
 
     if(syntax_branches.size() == 1 && syntax_branches.front())
