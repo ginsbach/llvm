@@ -1,18 +1,14 @@
 add_llvm_library(LLVMIDLSolver
-
-  Solver.cpp
-  Solution.cpp
-  FunctionWrap.cpp
-
-  BackendEdge.cpp
-  BackendSingle.cpp
-  BackendCollect.cpp
-  BackendDominate.cpp
-  BackendOrdering.cpp
-  BackendSameSets.cpp
-  BackendIncomingValue.cpp
   BackendSpecializations.cpp
-
-  DEPENDS
-  intrinsics_gen
+  BackendIncomingValue.cpp
+  BackendSameSets.cpp
+  BackendOrdering.cpp
+  BackendDominate.cpp
+  BackendCollect.cpp
+  BackendSingle.cpp
+  BackendEdge.cpp
+  FunctionWrap.cpp
+  Solution.cpp
+  Solver.cpp
+  DEPENDS intrinsics_gen
 )
