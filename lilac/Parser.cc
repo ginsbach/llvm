@@ -116,10 +116,10 @@ void GenerateHarnessInterfaces(vector<ProgramPart> parts)
                 return s;
             };
 
-            ofstream ofs(part.header[1]+"_interface.cc");
-            ofs<<"{\""+string_toupper(part.header[1])+"\", [](const Solution& s)->Value*{ return s[\"for\"][0][\"comparison\"]; },\n"
+            ofstream ofs(part.header[1]+"_replacer.h");
+            ofs<<"{\""+string_toupper(part.header[1])+"\", [](const Solution& s)->Value*{ return s[\"outer_loop\"][\"comparison\"]; },\n"
                  "[](Function& function, Solution solution) {\n"
-                 "    replace_idiom(function, solution, \""+part.header[1]+"_harness\", solution[\"for\"][0][\"successor\"],\n"
+                 "    replace_idiom(function, solution, \""+part.header[1]+"_harness\", solution[\"outer_loop\"][\"successor\"],\n"
                  "                  {";
             bool first = true;
             for(auto& arg : args)

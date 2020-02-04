@@ -1,3 +1,4 @@
+include_directories(${CMAKE_BINARY_DIR}/lilac)
 add_llvm_library(LLVMIDLPasses
 
   CustomPassFlangfix.cpp
@@ -5,5 +6,6 @@ add_llvm_library(LLVMIDLPasses
   CustomPassReplace.cpp
 
   DEPENDS
+  lilac-replacer-code
   intrinsics_gen
 )

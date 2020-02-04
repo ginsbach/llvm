@@ -130,27 +130,8 @@ class ResearchReplacer : public ResearchReplacerBase
 {
 public:
     ResearchReplacer() : ResearchReplacerBase({
-    {"GEMM", [](const Solution& s)->Value*{ return s["outer_loop"]["comparison"]; },
-    [](Function& function, Solution solution) {
-        replace_idiom(function, solution, "gemm_harness", solution["outer_loop"]["successor"],
-                      {solution["output"]["base_pointer"],
-                       solution["input1"]["base_pointer"],
-                       solution["input2"]["base_pointer"],
-                       solution["outer_loop"]["iter_end"],
-                       solution["outer_loop"]["iter_end"],
-                       solution["outer_loop"]["iter_end"]},
-                      {solution["output"]["store"]}); }},
-    {"SPMV_CSR", [](const Solution& s)->Value*{ return s["outer_loop"]["comparison"]; },
-    [](Function& function, Solution solution) { //(double* output, double* matrix, double* vector, int* ranges, int* indir, int rows) {
-        replace_idiom(function, solution, "spmv_csr_harness", solution["outer_loop"]["successor"],
-                      {solution["output"]["base_pointer"],
-                       solution["matrix"]["base_pointer"],
-                       solution["vector"]["base_pointer"],
-           //            solution["read_range"]["iter_begin_read"]["base_pointer"],
-                       solution["indir"]["base_pointer"],
-                       solution["outer_loop"]["iter_end"]},
-                      {solution["output"]["store"]}); }},
-    {"SPMV_JDS",  [](const Solution& s)->Value*{ return s["outer_loop"]["comparison"]; }, nullptr}}) { }
+        #include "CustomPassReplacerLiLACGenerated.h"
+    }) { }
 };
 
 static RegisterPass<ResearchReplacer> X("research-replacer", "Research replacer", false, false);

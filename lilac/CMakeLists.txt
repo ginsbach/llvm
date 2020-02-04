@@ -1,9 +1,3 @@
-
-set(CMAKE_CXX_STANDARD 17)
-add_executable(lilac_parser
-    Parser.cc
-)
-
 add_library(gemm_naive SHARED
     gemm_naive.cc
 )
@@ -22,30 +16,38 @@ add_library(gemm_openblas SHARED
 
 target_link_libraries(gemm_openblas openblas)
 
-ADD_CUSTOM_TARGET("lilac-idl"
-                  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
+set(CMAKE_CXX_STANDARD 17)
+add_executable(lilac_parser
+    Parser.cc
+)
+
+add_custom_target(lilac-idl
+                  DEPENDS Idioms.idl
                   DEPENDS spmv_jds_naive spmv_jds_naive gemm_naive gemm_openblas)
 
-ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
+add_custom_target(lilac-replacer-code
+                  DEPENDS CustomPassReplacerLiLACGenerated.h
+)
+add_custom_command(OUTPUT  CustomPassReplacerLiLACGenerated.h
+                   COMMAND cat gemm_replacer.h spmv_csr_replacer.h spmv_jds_replacer.h > CustomPassReplacerLiLACGenerated.h
+                   DEPENDS gemm_replacer.h spmv_csr_replacer.h spmv_jds_replacer.h
+)
+add_custom_command(OUTPUT  Idioms.idl
                    COMMAND cat gemm.idl spmv_csr.idl spmv_jds.idl > Idioms.idl
-                   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/gemm.idl ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr.idl ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds.idl
-                   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+                   DEPENDS gemm.idl spmv_csr.idl spmv_jds.idl
                    COMMENT "Concatenate idioms")
 
-ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr_naive.cc ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr_mkl.cc ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr_cuda.cc ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr.idl
+add_custom_command(OUTPUT  spmv_csr_replacer.h spmv_csr_naive.cc spmv_csr_mkl.cc spmv_csr_cuda.cc spmv_csr.idl
                    COMMAND lilac_parser < ${CMAKE_CURRENT_SOURCE_DIR}/spmv_csr.lilac
                    DEPENDS lilac_parser ${CMAKE_CURRENT_SOURCE_DIR}/spmv_csr.lilac
-                   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
                    COMMENT "Generate spmv_csr harnesses")
 
-ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds_naive.cc ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds.idl
+add_custom_command(OUTPUT  spmv_jds_replacer.h spmv_jds_naive.cc spmv_jds.idl
                    COMMAND lilac_parser < ${CMAKE_CURRENT_SOURCE_DIR}/spmv_jds.lilac
                    DEPENDS lilac_parser ${CMAKE_CURRENT_SOURCE_DIR}/spmv_jds.lilac
-                   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
                    COMMENT "Generate spmv_jds harnesses")
 
-ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gemm_naive.cc ${CMAKE_CURRENT_BINARY_DIR}/gemm_openblas.cc ${CMAKE_CURRENT_BINARY_DIR}/gemm_cuda.cc ${CMAKE_CURRENT_BINARY_DIR}/gemm.idl
+add_custom_command(OUTPUT  gemm_replacer.h gemm_naive.cc gemm_openblas.cc gemm_cuda.cc gemm.idl
                    COMMAND lilac_parser < ${CMAKE_CURRENT_SOURCE_DIR}/gemm.lilac
                    DEPENDS lilac_parser ${CMAKE_CURRENT_SOURCE_DIR}/gemm.lilac 
-                   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
                    COMMENT "Generate mm harnesses")
