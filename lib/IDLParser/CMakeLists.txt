@@ -1,30 +1,35 @@
 add_llvm_library(LLVMIDLParser
-  IdiomSpecifications.cpp
-
-  DEPENDS
-  idl_parser
-  intrinsics_gen
+  ${CMAKE_CURRENT_BINARY_DIR}/IdiomSpecifications.cpp
+  DEPENDS intrinsics_gen
+          idl_parser
 )
 
 set(CMAKE_CXX_STANDARD 17)
+
 add_executable(idl_parser
-    Parser.cc
+  Parser.cc
 )
 
-add_custom_command(OUTPUT  Idioms.idl
-                   COMMAND cat ${CMAKE_CURRENT_SOURCE_DIR}/Idioms.idl ${CMAKE_BINARY_DIR}/lilac/Idioms.idl
-                               > ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
-                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/Idioms.idl
-                           ${CMAKE_BINARY_DIR}/lilac/Idioms.idl
-                   DEPENDS lilac-idl
-                   COMMENT "Merge idiom specification files.")
+add_custom_command(
+  OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
+  COMMAND cat ${CMAKE_CURRENT_SOURCE_DIR}/Idioms.idl
+              ${CMAKE_BINARY_DIR}/lilac/Idioms.idl
+            > ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/Idioms.idl
+          ${CMAKE_BINARY_DIR}/lilac/Idioms.idl
+  DEPENDS lilac_target
+  COMMENT "Merge idiom specification files."
+)
 
-add_custom_command(OUTPUT  IdiomSpecifications.cpp
-                   COMMAND idl_parser ${CMAKE_CURRENT_SOURCE_DIR}/IDL.bnf ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
-                               | pypy ${CMAKE_CURRENT_SOURCE_DIR}/stage3.py
-                               > IdiomSpecifications.cpp
-                   DEPENDS idl_parser
-                           ${CMAKE_CURRENT_SOURCE_DIR}/IDL.bnf
-                           ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
-                           ${CMAKE_CURRENT_SOURCE_DIR}/stage3.py
-                   COMMENT "Generate idiom specifications C++ file")
+add_custom_command(
+  OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/IdiomSpecifications.cpp
+  COMMAND idl_parser ${CMAKE_CURRENT_SOURCE_DIR}/IDL.bnf
+                     ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
+              | pypy ${CMAKE_CURRENT_SOURCE_DIR}/stage3.py
+                   > ${CMAKE_CURRENT_BINARY_DIR}/IdiomSpecifications.cpp
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/IDL.bnf
+          ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
+          ${CMAKE_CURRENT_SOURCE_DIR}/stage3.py
+          idl_parser
+  COMMENT "Generate idiom specifications C++ file"
+)
