@@ -95,17 +95,20 @@ def code_generation_core(syntax, counter):
         if opcode[:3] == "Gep": opcode = "GetElementPtr"+opcode[3:]
         if opcode[:3] == "Phi": opcode = "PHI"+opcode[3:]
         if opcode[:6] == "Branch": opcode = "Br"+opcode[6:]
-        if opcode[-2:] == "or": opcode = opcode[:-2]+"Or"
+        if opcode[-2:] == "or" and opcode[-3:] != "xor": opcode = opcode[:-2]+"Or"
         if opcode[-3:] == "and": opcode = opcode[:-3]+"And"
         if opcode[-3:] == "add": opcode = opcode[:-3]+"Add"
+        if opcode[-3:] == "XOr": opcode = opcode[:-3]+"Xor"
         if opcode[-3:] == "sub": opcode = opcode[:-3]+"Sub"
         if opcode[-3:] == "mul": opcode = opcode[:-3]+"Mul"
         if opcode[-3:] == "div": opcode = opcode[:-3]+"Div"
         if opcode[-3:] == "cmp": opcode = opcode[:-3]+"Cmp"
         if opcode[-3:] == "ext": opcode = opcode[:-3]+"Ext"
         if opcode[-4:] == "cast": opcode = opcode[:-4]+"Cast"
+        if opcode[-5:] == "FpExt": opcode = opcode[:-5]+"FPExt"
         if opcode[-5:] == "shift": opcode = opcode[:-5]+"Shift"
         if opcode[-6:] == "vector": opcode = opcode[:-6]+"Vector"
+        if opcode[-7:] == "Fptrunc": opcode = opcode[:-7]+"FPTrunc"
         if opcode[-7:] == "element": opcode = opcode[:-7]+"Element"
 
         classname = "BackendOpcode"
