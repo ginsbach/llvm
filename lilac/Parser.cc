@@ -46,26 +46,26 @@ string         indent  (string input, size_t n);
 
 struct LiLACWhat
 {
-    LiLACWhat() {}
-    LiLACWhat(string t) : type(t) {}
     LiLACWhat(string t, string c): type(t), content{c} {}
     LiLACWhat(string t, vector<LiLACWhat> c): type(t), child{c} {}
 
     bool operator==(const LiLACWhat& other) const
         { return type == other.type && content == other.content && child == other.child; }
 
+    bool isnode() const { return !child.empty(); }
+    bool isleaf() const { return !content.empty(); }
     bool isleaf(const string& c) const { return content == c; }
     bool isnode(const string& t) const { return type == t; }
     const string& get_type() const { return type; }
     const string& get_leaf() const { return content; }
     const LiLACWhat& operator[](size_t i) const { return child[i]; }
-    const string& get_loop_iter() const { return child[2].get_leaf(); }
+    bool isloop() const { return isnode("loop") || isnode("map") || isnode("dot"); }
+    const string& get_loop_iter() const { return child[1].get_leaf(); }
 
 private:
     string type;
     string content;
     vector<LiLACWhat> child;
-
 };
 
 LiLACWhat parse_lilacwhat(string str);
@@ -136,17 +136,13 @@ void GenerateHarnessInterfaces(vector<ProgramPart> parts)
                 if(!first) ofs<<",\n                   ";
                 if(arg.first == "double*" || arg.first == "int*")
                     ofs<<"solution[\""<<arg.second<<"\"][\"base_pointer\"]";
-                else if((what.isnode("loop") || what.isnode("map") || what.isnode("dot")) &&
-                        what[1].isleaf(arg.second))
+                else if((what.isnode("loop") || what.isnode("map") || what.isnode("dot")) && what[2].isleaf(arg.second))
                     ofs<<"solution[\"outer_loop\"][\"iter_end\"]";
-                else if(what.isnode("loop") && what[3].isnode("map") &&
-                        what[3][1].isleaf(arg.second))
+                else if(what.isnode("loop") && what[3].isnode("map") && what[3][2].isleaf(arg.second))
                     ofs<<"solution[\"map_loop\"][\"iter_end\"]";
-                else if(what.isnode("map") && what[4].isnode("dot") &&
-                        what[4][1].isleaf(arg.second))
+                else if(what.isnode("map") && what[4].isnode("dot") && what[4][2].isleaf(arg.second))
                     ofs<<"solution[\"dot_loop\"][\"iter_end\"]";
-                else if(what.isnode("loop") && what[3].isnode("map") && what[3][4].isnode("dot") &&
-                        what[3][4][1].isleaf(arg.second))
+                else if(what.isnode("loop") && what[3].isnode("map") && what[3][4].isnode("dot") && what[3][4][2].isleaf(arg.second))
                     ofs<<"solution[\"dot_loop\"][\"iter_end\"]";
                 else
                     ofs<<"solution[\""<<arg.second<<"\"]";
@@ -381,7 +377,7 @@ LiLACWhat parse_lilacwhat(string str)
         {
             if(!new_tok.empty()) tokens.emplace_back("s", move(new_tok));
             new_tok.clear();
-            tokens.emplace_back(string{c});
+            tokens.emplace_back(string{c},  vector<LiLACWhat>{});
         }
         else new_tok.push_back(c);
     }
@@ -391,16 +387,15 @@ LiLACWhat parse_lilacwhat(string str)
     for(auto& token : tokens) {
         stack.push_back(move(token));
 
-        auto try_rule = [&stack](string type, vector<string> rules, vector<size_t> idx, size_t keep=0) {
+        auto try_rule = [&stack](string type, vector<string> rules, size_t keep=0) {
             auto test_atom = [](const LiLACWhat& token, string pattern) -> bool {
-                if(pattern.front() == '=') return token.isleaf(string(pattern.begin()+1, pattern.end()));
-                size_t it = 0, it2;
-                while((it2 = pattern.find('|', it)) < pattern.size()) {
-                    if(token.isnode(string(pattern.begin() + it, pattern.begin()+it2)))
-                        return true;
-                    it = it2+1;
+                pattern.push_back('|');
+                size_t it, it2;
+                for(it = 0; (it2 = pattern.find('|', it)) < pattern.size(); it = it2+1) {
+                    if(pattern[it] == '=' && token.isleaf({pattern.begin()+it+1, pattern.begin()+it2})) return true;
+                    if(pattern[it] != '=' && token.isnode({pattern.begin()+it, pattern.begin()+it2}))   return true;
                 }
-                return token.isnode(string(pattern.begin() + it, pattern.end()));
+                return false;
             };
 
             if(stack.size() < rules.size()) return false;
@@ -409,7 +404,9 @@ LiLACWhat parse_lilacwhat(string str)
                     return false;
 
             vector<LiLACWhat> gather_children;
-            for(auto i : idx) gather_children.push_back(move(stack[stack.size()-rules.size()+i]));
+            for(size_t i = 0; i < rules.size()-keep; i++)
+                if((rules[i][0] != '=' || rules[i].find('|') < rules[i].size()) && (rules[i].size() > 1 || rules[i] == "s"))
+                        gather_children.push_back(move(stack[stack.size()-rules.size()+i]));
 
             LiLACWhat what(type, gather_children);
             stack[stack.size()-rules.size()] = move(what);
@@ -417,14 +414,14 @@ LiLACWhat parse_lilacwhat(string str)
             return true;
         };
 
-        while(try_rule("index", {"s", "[", "binop|index|s", "]"}, {0,2})
-           || try_rule("binop", {"binop|index|s", "+|-|*", "binop|index|s", ")|]|,|+|-|*"}, {0,1,2}, 1)
+        while(try_rule("index", {"s", "[", "binop|index|s", "]"})
+           || try_rule("binop", {"binop|index|s", "+|-|*", "binop|index|s", ")|]|,|+|-|*"}, 1)
            || try_rule("dot",   {"=sum", "(", "binop|index|s", "<", "=", "s", "<",
-                                 "binop|index|s", ")", "binop|index|s", "*", "binop|index|s", ";"}, {2,7,5,9,11})
+                                 "binop|index|s", ")", "binop|index|s", "*", "binop|index|s", ";"})
            || try_rule("map",   {"=forall", "(", "binop|index|s", "<", "=", "s", "<",
-                                 "binop|index|s", ")", "{", "index", "=", "dot", "}"}, {2,7,5,10,12})
+                                 "binop|index|s", ")", "{", "index", "=", "dot", "}"})
            || try_rule("loop",  {"=forall", "(", "binop|index|s", "<", "=", "s", "<",
-                                 "binop|index|s", ")", "{", "map", "}"}, {2,7,5,10}));
+                                 "binop|index|s", ")", "{", "map", "}"}));
     }
 
     if(stack.size() == 1)
@@ -467,40 +464,31 @@ CapturedRange parse_marshalling(string input)
 
 string generate_naive_impl(const LiLACWhat& what, string pad)
 {
-    if(what.isnode("s")) return what.get_leaf();
+    if(what.isloop())
+    {
+        string loopheader = "for(int "+what.get_loop_iter()+" = "+generate_naive_impl(what[0])+"; "
+                                      +what.get_loop_iter()+" < "+generate_naive_impl(what[2])+"; "
+                                      +what.get_loop_iter()+"++)";
+        if(what.isnode("map"))
+            return pad+loopheader+" {\n"
+                  +pad+"  double value = 0.0;\n"
+                      +generate_naive_impl(what[4], pad+"  ")
+                  +pad+"  "+generate_naive_impl(what[3])+" = value;\n"
+                  +pad+"}\n";
+        else if(what.isnode("dot"))
+            return pad+loopheader+"\n"
+                  +pad+"  value += "+generate_naive_impl(what[3])+" * "+generate_naive_impl(what[4])+";\n";
+        else
+            return pad+loopheader+" {\n"
+                      +generate_naive_impl(what[3], pad+"  ")
+                  +pad+"}\n";
+    }
     else if(what.isnode("index"))
         return what[0].get_leaf()+"["+generate_naive_impl(what[1])+"]";
     else if(what.isnode("binop"))
         return generate_naive_impl(what[0])+what[1].get_type()+generate_naive_impl(what[2]);
-    else if(what.isnode("loop"))
-        return pad+"int "+what.get_loop_iter()+", "+what[3].get_loop_iter()+", "+what[3][4].get_loop_iter()+";\n"
-              +pad+"for("+what.get_loop_iter()+" = "+generate_naive_impl(what[0])+"; "
-                         +what.get_loop_iter()+" < "+generate_naive_impl(what[1])+"; "
-                         +what.get_loop_iter()+"++) {\n"
-              +pad+"  for("+what[3].get_loop_iter()+" = "+generate_naive_impl(what[3][0])+"; "
-                           +what[3].get_loop_iter()+" < "+generate_naive_impl(what[3][1])+"; "
-                           +what[3].get_loop_iter()+"++) {\n"
-              +pad+"    double value = 0.0;\n"
-                  +generate_naive_impl(what[3][4], pad+"    ")
-              +pad+"    "+generate_naive_impl(what[3][3])+" = value;\n"
-              +pad+"  }\n"
-              +pad+"}\n";
-    else if(what.isnode("map"))
-        return pad+"int "+what.get_loop_iter()+", "+what[4].get_loop_iter()+";\n"
-              +pad+"for("+what.get_loop_iter()+" = "+generate_naive_impl(what[0])+"; "
-                         +what.get_loop_iter()+" < "+generate_naive_impl(what[1])+"; "
-                         +what.get_loop_iter()+"++) {\n"
-              +pad+"  double value = 0.0;\n"
-                  +generate_naive_impl(what[4], pad+"  ")
-              +pad+"  "+generate_naive_impl(what[3])+" = value;\n"
-              +pad+"}\n";
-    else if(what.isnode("dot"))
-        return pad+"for("+what.get_loop_iter()+" = "+generate_naive_impl(what[0])+"; "
-                         +what.get_loop_iter()+" < "+generate_naive_impl(what[1])+"; "
-                         +what.get_loop_iter()+"++)\n"
-              +pad+"  value += "+generate_naive_impl(what[3])+" * "+generate_naive_impl(what[4])+";\n";
-
-    throw string("Invalid computation \""+what.get_type()+"\", cannot generate naive implementation.");
+    else if(what.isnode("s")) return what.get_leaf();
+    else throw string("Invalid computation \""+what.get_type()+"\", cannot generate naive implementation.");
 }
 
 vector<pair<string,string>> capture_arguments(const LiLACWhat& what)
@@ -531,7 +519,7 @@ vector<pair<string,string>> capture_arguments(const LiLACWhat& what)
             stack.push_back(front[2]);
             stack.push_back(front[0]);
         }
-        else if(front.isnode("loop") || front.isnode("map") || front.isnode("dot"))
+        else if(front.isloop())
         {
             arg_set.insert(front.get_loop_iter());
         
@@ -541,7 +529,7 @@ vector<pair<string,string>> capture_arguments(const LiLACWhat& what)
             if(front.isnode("dot"))   stack.push_back(front[4][1]);
             if(front.isnode("loop"))  stack.push_back(front[3]);
             else                      stack.push_back(front[3][1]);
-            stack.push_back(front[1]);
+            stack.push_back(front[2]);
             stack.push_back(front[0]);
         }
     }
