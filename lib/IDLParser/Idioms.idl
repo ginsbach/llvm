@@ -94,26 +94,12 @@ Constraint SPMV_JDS
       with {outer_loop} as {scope}
        and {tmp1.value} as {input_index}
                         at {col_ind} and
-  inherits ReadZeroRanges
-     with {outer_loop}            as {scope}
-      and {inner_loop.iter_begin} as {range_begin}
-      and {inner_loop.iter_end}   as {range_end}
-      and {outer_loop.iterator}   as {input_index}
-                                  at {read_range})
+  inherits VectorRead
+      with {outer_loop}          as {scope}
+       and {inner_loop.iter_end} as {value}
+       and {outer_loop.iterator} as {input_index}
+                                 at {tmp2})
 End
-
-Constraint ReadZeroRanges
-( {range_begin} is integer zero and
-  {range_end} is load instruction)
-#and
-#  inherits VectorRead
-#      with {input_index} as {input_index}
-#       and {scope}       as {scope} at {iter_begin_read} and
-#  inherits VectorRead
-#      with {input_index} as {input_index}
-#       and {scope} as {scope} at {iter_end_read})
-End
-
 
 Constraint ReadRanges
 ( ( ( {range_end} is load instruction and
