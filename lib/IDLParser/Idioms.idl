@@ -2,7 +2,9 @@
 
 Constraint ReadZeroRanges
 ( {range_begin} is integer zero and
-  {range_end} is load instruction)
+  {range_end} is load instruction and
+  {address} is first argument of {range_end} and
+  {base_pointer} is first argument of {address})
 #and
 #  inherits VectorRead
 #      with {input_index} as {input_index}
@@ -23,7 +25,9 @@ Constraint ReadRanges
       {range_end} is load instruction and
       {range_begin} is the same as {iter_begin_read.value} and 
       {range_end} is the same as {iter_end_read.value} and
-      {range_begin} strictly control flow dominates {scope.end})))
+      {range_begin} strictly control flow dominates {scope.end})) and
+  {address} is first argument of {range_end} and
+  {base_pointer} is first argument of {address})
 #and
 #  inherits VectorRead
 #      with {input_index} as {input_index}

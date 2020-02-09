@@ -23,6 +23,7 @@ public:
 
 bool ResearchFlangfix::runOnFunction(Function& function)
 {
+    return false;
     // Remove secondary induction variables.
     for(BasicBlock& block : function.getBasicBlockList())
     {

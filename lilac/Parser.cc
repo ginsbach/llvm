@@ -128,7 +128,7 @@ void GenerateHarnessInterfaces(vector<ProgramPart> parts)
             ofstream ofs(part.header[1]+"_replacer.h");
             ofs<<"{\""+string_toupper(part.header[1])+"\", [](const Solution& s)->Value*{ return s[\"outer_loop\"][\"comparison\"]; },\n"
                  "[](Function& function, Solution solution) {\n"
-                 "    replace_idiom(function, solution, \""+part.header[1]+"_harness\", solution[\"outer_loop\"][\"successor\"],\n"
+                 "    replace_idiom(function, solution, \""+part.header[1]+"_harness\", solution[\"outer_loop\"][\"precursor\"],\n"
                  "                  {";
             bool first = true;
             for(auto& arg : args)
@@ -666,14 +666,14 @@ string generate_idl(const LiLACWhat& what)
               "       and {"+last_loop+".iter_begin} as {range_begin}\n"
               "       and {"+last_loop+".iter_end}   as {range_end}\n"
               "       and {outer_loop.iterator} as {input_index}\n"
-              "                                 at {read_range}";
+              "                                 at {"+what[4][2][0].get_leaf()+"}";
     else
         code += "inherits ReadRanges\n"
               "      with {outer_loop}          as {scope}\n"
               "       and {"+last_loop+".iter_begin} as {range_begin}\n"
               "       and {"+last_loop+".iter_end}   as {range_end}\n"
               "       and {outer_loop.iterator} as {input_index}\n"
-              "                                 at {read_range}";
+              "                                 at {"+what[4][2][0].get_leaf()+"}";
     return code+")";
 }
 

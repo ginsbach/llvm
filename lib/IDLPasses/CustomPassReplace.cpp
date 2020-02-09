@@ -108,6 +108,16 @@ void replace_idiom(Function& function, Solution solution, std::string harness_na
     {
         if(value)
         {
+            if(isa<IntegerType>(value->getType()))
+                value = CastInst::CreateTruncOrBitCast(value, IntegerType::get(value->getContext(), 32), "", insertion_point);
+            if(auto pointer_type = dyn_cast<PointerType>(value->getType()))
+            {
+                if(isa<IntegerType>(pointer_type->getElementType()))
+                {
+                    value = CastInst::CreateBitOrPointerCast(value, 
+                        PointerType::get(IntegerType::get(value->getContext(), 32), pointer_type->getAddressSpace()), "", insertion_point);
+                }
+            }
             variable_values.push_back(value);
             variable_types.push_back(value->getType());
         }
