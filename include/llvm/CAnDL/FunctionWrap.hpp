@@ -7,6 +7,9 @@ class Function;
 class Value;
 }
 
+using Struct2D = std::vector<std::vector<unsigned>>;
+using Struct3D = std::vector<std::vector<std::vector<unsigned>>>;
+
 /* This class is used as a wrapper around llvm::Function. */
 class FunctionWrap : public std::vector<llvm::Value*>
 {
@@ -15,22 +18,20 @@ public:
 
     llvm::Function& function;
 
-    std::vector<std::vector<unsigned>>              cfg;
-    std::vector<std::vector<unsigned>>              rcfg;
-    std::vector<std::vector<std::vector<unsigned>>> ocfg;
-    std::vector<std::vector<std::vector<unsigned>>> rocfg;
-    std::vector<std::vector<unsigned>>              dfg;
-    std::vector<std::vector<unsigned>>              rdfg;
-    std::vector<std::vector<std::vector<unsigned>>> odfg;
-    std::vector<std::vector<std::vector<unsigned>>> rodfg;
-    std::vector<std::vector<unsigned>>              cdg;
-    std::vector<std::vector<unsigned>>              rcdg;
-    std::vector<std::vector<unsigned>>              pdg;
-    std::vector<std::vector<unsigned>>              rpdg;
-    std::vector<std::vector<unsigned>>              blocks;
-    std::vector<std::vector<unsigned>>              rblocks;
-
-    static double stopped_time;
+    Struct2D cfg;
+    Struct2D rcfg;
+    Struct3D ocfg;
+    Struct3D rocfg;
+    Struct2D dfg;
+    Struct2D rdfg;
+    Struct3D odfg;
+    Struct3D rodfg;
+    Struct2D cdg;
+    Struct2D rcdg;
+    Struct2D pdg;
+    Struct2D rpdg;
+    Struct2D blocks;
+    Struct2D rblocks;
 };
 
 #endif
