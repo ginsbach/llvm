@@ -46,20 +46,16 @@ std::vector<unsigned> BackendLLVMSingleBase::compute_hits(const FunctionWrap& wr
 }
 
 BackendNotNumericConstant::BackendNotNumericConstant(const FunctionWrap& wrap)
-      : BackendLLVMSingle<llvm::Value>(wrap, [](llvm::Value& value)
-                                              { return !llvm::isa<llvm::ConstantInt>(value) &&
-                                                       !llvm::isa<llvm::ConstantFP>(value)  &&
-                                                       !llvm::isa<llvm::Function>(value)  &&
-                                                       !llvm::isa<llvm::ConstantPointerNull>(value); }) { }
-
+  : BackendLLVMSingleBase(wrap, [](llvm::Value& value){ return !llvm::isa<llvm::ConstantInt>(value) &&
+                                                               !llvm::isa<llvm::ConstantFP>(value)  &&
+                                                               !llvm::isa<llvm::Function>(value)  &&
+                                                               !llvm::isa<llvm::ConstantPointerNull>(value); }) { }
 
 BackendConstant::BackendConstant(const FunctionWrap& wrap)
-               : BackendLLVMSingle<llvm::Constant>(wrap, nullptr) { }
+  : BackendLLVMSingleBase(wrap, [](llvm::Value& value){ return llvm::isa<llvm::Constant>(value); }) { }
 
 BackendPreexecution::BackendPreexecution(const FunctionWrap& wrap)
-      : BackendLLVMSingle<llvm::Value>(wrap, [](llvm::Value& value)
-                                             { return !llvm::isa<llvm::Instruction>(value); }) { }
-
+  : BackendLLVMSingleBase(wrap, [](llvm::Value& value){ return !llvm::isa<llvm::Instruction>(value); }) { }
 
 std::vector<std::string> function_whitelist = {"log", "exp", "sqrt", "cos", "sin", "tan", "logf", "expf", "sqrtf",
                                                "cosf", "sinf", "tanf", "llvm.fabs.f64", "llvm.fabs.f32",
@@ -111,24 +107,6 @@ BackendOpcode::BackendOpcode(const FunctionWrap& wrap, unsigned op)
         return inst->getOpcode() == op;
     else return false;
 }) { }
-
-template<bool(llvm::Type::*predicate)() const>
-BackendLLVMType<predicate>::BackendLLVMType(const FunctionWrap& wrap)
-      : BackendLLVMSingle<llvm::Value>(wrap, [](llvm::Value& value)
-                                              { return (value.getType()->*predicate)(); }) { }
-
-template<std::vector<std::vector<unsigned>> FunctionWrap::* forw_graph,
-         std::vector<std::vector<unsigned>> FunctionWrap::* back_graph>
-BackendLLVMEdge<forw_graph,back_graph>::BackendLLVMEdge(const FunctionWrap& wrap)
-                                      : BackendEdge(wrap.*forw_graph, wrap.*back_graph) { }
-
-template<unsigned i>
-BackendLLVMOperand<i>::BackendLLVMOperand(const FunctionWrap& wrap)
-                     : BackendEdge(wrap.odfg[i], wrap.rodfg[i]) { }
-
-template<unsigned i>
-BackendLLVMSuccessor<i>::BackendLLVMSuccessor(const FunctionWrap& wrap)
-                       : BackendEdge(wrap.rocfg[i], wrap.ocfg[i]) { }
 
 template<bool lt, bool eq, bool gt>
 BackendOrderWrap<lt,eq,gt>::BackendOrderWrap(const FunctionWrap&)
@@ -206,37 +184,8 @@ std::vector<unsigned> BackendLLVMDominate<inverted,unstrict,origin_calc,forw_gra
     return origins;
 }
 
-
-template class BackendLLVMType<&llvm::Type::isIntegerTy>;
-template class BackendLLVMType<&llvm::Type::isFloatTy>;
-template class BackendLLVMType<&llvm::Type::isVectorTy>;
-template class BackendLLVMType<&llvm::Type::isPointerTy>;
-
 template class BackendOrderWrap<false,true,false>;
 template class BackendOrderWrap<true,false,true>;
-template class BackendOrderWrap<true,false,false>;
-
-template class BackendLLVMEdge<&FunctionWrap::blocks, &FunctionWrap::rblocks>;
-
-template class BackendLLVMEdge<&FunctionWrap::dfg, &FunctionWrap::rdfg>;
-template class BackendLLVMEdge<&FunctionWrap::cfg, &FunctionWrap::rcfg>;
-template class BackendLLVMEdge<&FunctionWrap::cdg, &FunctionWrap::rcdg>;
-template class BackendLLVMEdge<&FunctionWrap::pdg, &FunctionWrap::rpdg>;
-
-template class BackendLLVMOperand<0>;
-template class BackendLLVMOperand<1>;
-template class BackendLLVMOperand<2>;
-template class BackendLLVMOperand<3>;
-
-template class BackendLLVMSuccessor<0>;
-template class BackendLLVMSuccessor<1>;
-template class BackendLLVMSuccessor<2>;
-template class BackendLLVMSuccessor<3>;
-
-template class BackendLLVMDominate<false, true,  0, &FunctionWrap:: dfg>;
-template class BackendLLVMDominate<false, true,  1, &FunctionWrap::rdfg>;
-template class BackendLLVMDominate<false, false, 0, &FunctionWrap:: dfg>;
-template class BackendLLVMDominate<false, false, 1, &FunctionWrap::rdfg>;
 
 template class BackendLLVMDominate<false, true,  2, &FunctionWrap:: cfg>;
 template class BackendLLVMDominate<false, true,  3, &FunctionWrap::rcfg>;
@@ -247,21 +196,6 @@ template class BackendLLVMDominate<false, true,  4, &FunctionWrap:: pdg>;
 template class BackendLLVMDominate<false, true,  5, &FunctionWrap::rpdg>;
 template class BackendLLVMDominate<false, false, 4, &FunctionWrap:: pdg>;
 template class BackendLLVMDominate<false, false, 5, &FunctionWrap::rpdg>;
-
-template class BackendLLVMDominate<true, true,  0, &FunctionWrap:: dfg>;
-template class BackendLLVMDominate<true, true,  1, &FunctionWrap::rdfg>;
-template class BackendLLVMDominate<true, false, 0, &FunctionWrap:: dfg>;
-template class BackendLLVMDominate<true, false, 1, &FunctionWrap::rdfg>;
-
-template class BackendLLVMDominate<true, true,  2, &FunctionWrap:: cfg>;
-template class BackendLLVMDominate<true, true,  3, &FunctionWrap::rcfg>;
-template class BackendLLVMDominate<true, false, 2, &FunctionWrap:: cfg>;
-template class BackendLLVMDominate<true, false, 3, &FunctionWrap::rcfg>;
-
-template class BackendLLVMDominate<true, true,  4, &FunctionWrap:: pdg>;
-template class BackendLLVMDominate<true, true,  5, &FunctionWrap::rpdg>;
-template class BackendLLVMDominate<true, false, 4, &FunctionWrap:: pdg>;
-template class BackendLLVMDominate<true, false, 5, &FunctionWrap::rpdg>;
 
 template class BackendLLVMDominate<false, false, UINT_MAX, &FunctionWrap::cfg>;
 template class BackendLLVMDominate<false, false, UINT_MAX, &FunctionWrap::dfg>;
