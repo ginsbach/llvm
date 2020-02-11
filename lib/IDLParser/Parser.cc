@@ -72,26 +72,30 @@ vector<SyntaxTree> ProcessIDLSpecs(const vector<SyntaxTree> &in_vector);
 ostream &operator<<(ostream &ostr, const vector<SyntaxTree> &x);
 
 // The main function basically just chains the previously declared functions.
-int main(int argc, char **argv) {
-  try {
-    if (argc != 3)
-      throw string("This program requires two filenames (BNF + code) as "
-                   "command line arguments.");
+int main(int argc, char** argv)
+{
+    try
+    {
+        if(argc != 3)
+            throw string("This program requires two filenames (BNF + code) as command line arguments.");
 
-    auto read_whole_file = [](char *filename) {
-      ifstream ifs(filename);
-      return string(istreambuf_iterator<char>(ifs), {});
-    };
+        auto read_whole_file = [](char* filename) {
+            ifstream ifs(filename);
+            auto iter = istreambuf_iterator<char>(ifs);
+            return string(iter, {});
+        };
 
-    auto parsed_bnf = ParseBNF(read_whole_file(argv[1]));
-    auto parse_result = Parse(parsed_bnf, read_whole_file(argv[2]));
-    auto exported_specs = ProcessIDLSpecs(parse_result);
-    cout << exported_specs;
-  } catch (string error) {
-    cerr << "Error: " << error << "\n";
-    return 1;
-  }
-  return 0;
+        auto parsed_bnf     = ParseBNF(read_whole_file(argv[1]));
+        auto parse_result   = Parse(parsed_bnf, read_whole_file(argv[2]));
+        auto exported_specs = ProcessIDLSpecs(parse_result);
+        cout<<exported_specs;
+    }
+    catch(string error)
+    {
+        cerr<<"Error: "<<error<<"\n";
+        return 1;
+    }
+    return 0;
 }
 
 // The syntax trees are printed with parentheses to signify the hierarchy and

@@ -1,4 +1,4 @@
-find_package(OpenBLAS REQUIRED)
+find_package(BLAS REQUIRED)
 
 add_custom_target(lilac_target
   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
@@ -49,8 +49,8 @@ add_library(spmv_jds_naive SHARED
     ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds_naive.cc
 )
 
-target_link_libraries(gemm_openblas ${OpenBLAS_LIBRARIES})
-target_include_directories(gemm_openblas PRIVATE ${OpenBLAS_INCLUDE_DIRS})
+target_link_libraries(gemm_openblas ${BLAS_LIBRARIES})
+target_include_directories(gemm_openblas PRIVATE ${BLAS_INCLUDE_DIRS})
 
 set(CMAKE_CXX_STANDARD 17)
 

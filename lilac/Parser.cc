@@ -28,7 +28,8 @@ void parse_program(vector<ProgramPart> input);
 int main()
 {
     try {
-        auto parts = SplitCodeParts(string(istreambuf_iterator<char>(cin), {}));
+        auto iter  = istreambuf_iterator<char>(cin);
+        auto parts = SplitCodeParts(string(iter, {}));
         GenerateIDLSpecs           (parts);
         GenerateHarnessInterfaces  (parts);
         GenerateNaiveHarnesses     (parts);
