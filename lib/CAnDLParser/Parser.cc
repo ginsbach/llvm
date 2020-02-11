@@ -68,7 +68,8 @@ int main(int argc, char** argv)
 
         auto read_whole_file = [](char* filename) {
             ifstream ifs(filename);
-            return string(istreambuf_iterator<char>(ifs), {});
+            auto iter = istreambuf_iterator<char>(ifs);
+            return string(iter, {});
         };
 
         auto parsed_bnf     = ParseBNF(read_whole_file(argv[1]));
