@@ -5,7 +5,6 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/Support/Timer.h"
 #include <vector>
-#include <iostream>
 
 class BackendConstantValue : public BackendSingle
 {
@@ -40,22 +39,21 @@ public:
         }) { }
 };
 
-class BackendNotNumericConstant : public BackendLLVMSingle<llvm::Value>
+class BackendNotNumericConstant : public BackendLLVMSingleBase
 {
 public:
     BackendNotNumericConstant() = default;
     BackendNotNumericConstant(const FunctionWrap& wrap);
 };
 
-class BackendConstant : public BackendLLVMSingle<llvm::Constant>
+class BackendConstant : public BackendLLVMSingleBase
 {
 public:
     BackendConstant() = default;
     BackendConstant(const FunctionWrap& wrap);
 };
 
-
-class BackendPreexecution : public BackendLLVMSingle<llvm::Value>
+class BackendPreexecution : public BackendLLVMSingleBase
 {
 public:
     BackendPreexecution() = default;
@@ -93,14 +91,6 @@ public:
 
 using BackendInstruction = BackendOpcode;
 
-template<bool(llvm::Type::*predicate)() const>
-class BackendLLVMType: public BackendLLVMSingle<llvm::Value>
-{
-public:
-    BackendLLVMType() = default;
-    BackendLLVMType(const FunctionWrap& wrap);
-};
-
 class BackendFunctionAttribute : public BackendLLVMSingle<llvm::Function>
 {
 public:
@@ -108,27 +98,76 @@ public:
     BackendFunctionAttribute(const FunctionWrap& wrap);
 };
 
-template<std::vector<std::vector<unsigned>> FunctionWrap::* forw_graph,
-         std::vector<std::vector<unsigned>> FunctionWrap::* back_graph>
-class BackendLLVMEdge : public BackendEdge
+class BackendIntegerType : public BackendLLVMSingleBase
 {
 public:
-    BackendLLVMEdge(const FunctionWrap& wrap);
+    BackendIntegerType() = default;
+    BackendIntegerType(FunctionWrap& wrap)
+       : BackendLLVMSingleBase(wrap, [](llvm::Value& v) { return v.getType()->isIntegerTy(); }) { }
 };
 
-template<unsigned i>
-class BackendLLVMOperand : public BackendEdge
+class BackendFloatType : public BackendLLVMSingleBase
 {
 public:
-    BackendLLVMOperand(const FunctionWrap& wrap);
+    BackendFloatType() = default;
+    BackendFloatType(FunctionWrap& wrap)
+       : BackendLLVMSingleBase(wrap, [](llvm::Value& v) { return v.getType()->isFloatTy(); }) { }
 };
 
-template<unsigned i>
-class BackendLLVMSuccessor : public BackendEdge
+class BackendVectorType : public BackendLLVMSingleBase
 {
 public:
-    BackendLLVMSuccessor(const FunctionWrap& wrap);
+    BackendVectorType() = default;
+    BackendVectorType(FunctionWrap& wrap)
+       : BackendLLVMSingleBase(wrap, [](llvm::Value& v) { return v.getType()->isVectorTy(); }) { }
 };
+
+class BackendPointerType : public BackendLLVMSingleBase
+{
+public:
+    BackendPointerType() = default;
+    BackendPointerType(FunctionWrap& wrap)
+       : BackendLLVMSingleBase(wrap, [](llvm::Value& v) { return v.getType()->isPointerTy(); }) { }
+};
+
+class BackendDFGEdge : public BackendEdge
+    { public: BackendDFGEdge(FunctionWrap& wrap) : BackendEdge(wrap.dfg, wrap.rdfg) { } };
+
+class BackendCFGEdge : public BackendEdge
+    { public: BackendCFGEdge(FunctionWrap& wrap) : BackendEdge(wrap.cfg, wrap.rcfg) { } };
+
+class BackendCDGEdge : public BackendEdge
+    { public: BackendCDGEdge(FunctionWrap& wrap) : BackendEdge(wrap.cdg, wrap.rcdg) { } };
+
+class BackendPDGEdge : public BackendEdge
+    { public: BackendPDGEdge(FunctionWrap& wrap) : BackendEdge(wrap.pdg, wrap.rpdg) { } };
+
+class BackendBlock : public BackendEdge
+    { public: BackendBlock(FunctionWrap& wrap) : BackendEdge(wrap.blocks, wrap.rblocks) { } };
+
+class BackendFirstOperand : public BackendEdge
+    { public: BackendFirstOperand(FunctionWrap& wrap) : BackendEdge(wrap.odfg[0], wrap.rodfg[0]) { } };
+
+class BackendSecondOperand : public BackendEdge
+    { public: BackendSecondOperand(FunctionWrap& wrap) : BackendEdge(wrap.odfg[1], wrap.rodfg[1]) { } };
+
+class BackendThirdOperand : public BackendEdge
+    { public: BackendThirdOperand(FunctionWrap& wrap) : BackendEdge(wrap.odfg[2], wrap.rodfg[2]) { } };
+
+class BackendFourthOperand : public BackendEdge
+    { public: BackendFourthOperand(FunctionWrap& wrap) : BackendEdge(wrap.odfg[3], wrap.rodfg[3]) { } };
+
+class BackendFirstSuccessor : public BackendEdge
+    { public: BackendFirstSuccessor(FunctionWrap& wrap) : BackendEdge(wrap.rocfg[0], wrap.ocfg[0]) { } };
+
+class BackendSecondSuccessor : public BackendEdge
+    { public: BackendSecondSuccessor(FunctionWrap& wrap) : BackendEdge(wrap.rocfg[1], wrap.ocfg[1]) { } };
+
+class BackendThirdSuccessor : public BackendEdge
+    { public: BackendThirdSuccessor(FunctionWrap& wrap) : BackendEdge(wrap.rocfg[2], wrap.ocfg[2]) { } };
+
+class BackendFourthSuccessor : public BackendEdge
+    { public: BackendFourthSuccessor(FunctionWrap& wrap) : BackendEdge(wrap.rocfg[3], wrap.ocfg[3]) { } };
 
 template<bool lt, bool eq, bool gt>
 class BackendOrderWrap : public BackendOrdering<lt,eq,gt>
@@ -136,6 +175,9 @@ class BackendOrderWrap : public BackendOrdering<lt,eq,gt>
 public:
     BackendOrderWrap(const FunctionWrap&);
 };
+
+using BackendSame     = BackendOrderWrap<false,true,false>;
+using BackendDistinct = BackendOrderWrap<true,false,true>;
 
 template<bool inverted, bool unstrict, unsigned origin_calc,
          std::vector<std::vector<unsigned>> FunctionWrap::* forw_graph>
@@ -163,36 +205,6 @@ private:
     unsigned number_origins;
 };
 
-using BackendIntegerType = BackendLLVMType<&llvm::Type::isIntegerTy>;
-using BackendFloatType   = BackendLLVMType<&llvm::Type::isFloatTy>;
-using BackendVectorType  = BackendLLVMType<&llvm::Type::isVectorTy>;
-using BackendPointerType = BackendLLVMType<&llvm::Type::isPointerTy>;
-
-using BackendSame     = BackendOrderWrap<false,true,false>;
-using BackendDistinct = BackendOrderWrap<true,false,true>;
-using BackendOrder    = BackendOrderWrap<true,false,false>;
-
-using BackendBlock    = BackendLLVMEdge<&FunctionWrap::blocks, &FunctionWrap::rblocks>;
-using BackendDFGEdge  = BackendLLVMEdge<&FunctionWrap::dfg,    &FunctionWrap::rdfg>;
-using BackendCFGEdge  = BackendLLVMEdge<&FunctionWrap::cfg,    &FunctionWrap::rcfg>;
-using BackendCDGEdge  = BackendLLVMEdge<&FunctionWrap::cdg,    &FunctionWrap::rcdg>;
-using BackendPDGEdge  = BackendLLVMEdge<&FunctionWrap::pdg,    &FunctionWrap::rpdg>;
-
-using BackendFirstOperand  = BackendLLVMOperand<0>;
-using BackendSecondOperand = BackendLLVMOperand<1>;
-using BackendThirdOperand  = BackendLLVMOperand<2>;
-using BackendFourthOperand = BackendLLVMOperand<3>;
-
-using BackendFirstSuccessor  = BackendLLVMSuccessor<0>;
-using BackendSecondSuccessor = BackendLLVMSuccessor<1>;
-using BackendThirdSuccessor  = BackendLLVMSuccessor<2>;
-using BackendFourthSuccessor = BackendLLVMSuccessor<3>;
-
-using BackendDFGDominate       = BackendLLVMDominate<false, true,  0, &FunctionWrap:: dfg>;
-using BackendDFGPostdom        = BackendLLVMDominate<false, true,  1, &FunctionWrap::rdfg>;
-using BackendDFGDominateStrict = BackendLLVMDominate<false, false, 0, &FunctionWrap:: dfg>;
-using BackendDFGPostdomStrict  = BackendLLVMDominate<false, false, 1, &FunctionWrap::rdfg>;
-
 using BackendCFGDominate       = BackendLLVMDominate<false, true,  2, &FunctionWrap:: cfg>;
 using BackendCFGPostdom        = BackendLLVMDominate<false, true,  3, &FunctionWrap::rcfg>;
 using BackendCFGDominateStrict = BackendLLVMDominate<false, false, 2, &FunctionWrap:: cfg>;
@@ -202,21 +214,6 @@ using BackendPDGDominate       = BackendLLVMDominate<false, true,  4, &FunctionW
 using BackendPDGPostdom        = BackendLLVMDominate<false, true,  5, &FunctionWrap::rpdg>;
 using BackendPDGDominateStrict = BackendLLVMDominate<false, false, 4, &FunctionWrap:: pdg>;
 using BackendPDGPostdomStrict  = BackendLLVMDominate<false, false, 5, &FunctionWrap::rpdg>;
-
-using BackendDFGNotDominate       = BackendLLVMDominate<true, true,  0, &FunctionWrap:: dfg>;
-using BackendDFGNotPostdom        = BackendLLVMDominate<true, true,  1, &FunctionWrap::rdfg>;
-using BackendDFGNotDominateStrict = BackendLLVMDominate<true, false, 0, &FunctionWrap:: dfg>;
-using BackendDFGNotPostdomStrict  = BackendLLVMDominate<true, false, 1, &FunctionWrap::rdfg>;
-
-using BackendCFGNotDominate       = BackendLLVMDominate<true, true,  2, &FunctionWrap:: cfg>;
-using BackendCFGNotPostdom        = BackendLLVMDominate<true, true,  3, &FunctionWrap::rcfg>;
-using BackendCFGNotDominateStrict = BackendLLVMDominate<true, false, 2, &FunctionWrap:: cfg>;
-using BackendCFGNotPostdomStrict  = BackendLLVMDominate<true, false, 3, &FunctionWrap::rcfg>;
-
-using BackendPDGNotDominate       = BackendLLVMDominate<true, true,  4, &FunctionWrap:: pdg>;
-using BackendPDGNotPostdom        = BackendLLVMDominate<true, true,  5, &FunctionWrap::rpdg>;
-using BackendPDGNotDominateStrict = BackendLLVMDominate<true, false, 4, &FunctionWrap:: pdg>;
-using BackendPDGNotPostdomStrict  = BackendLLVMDominate<true, false, 5, &FunctionWrap::rpdg>;
 
 using BackendCFGBlocked = BackendLLVMDominate<false, false, UINT_MAX, &FunctionWrap::cfg>;
 using BackendDFGBlocked = BackendLLVMDominate<false, false, UINT_MAX, &FunctionWrap::dfg>;
