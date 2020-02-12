@@ -1,52 +1,50 @@
 #include "llvm/IDL/BackendClasses.hpp"
 
-BackendEdge::BackendEdge(const Graph& gf, const Graph& gb)
-           : graphs{{gf,gb}}, amount_completed(0), src_ptr(nullptr), dst_ptr(nullptr) { }
+BackendEdge::BackendEdge(const Graph &gf, const Graph &gb)
+    : graphs{{gf, gb}}, amount_completed(0), src_ptr(), dst_ptr() {}
 
-template<unsigned idx>
-SkipResult BackendEdge::skip_invalid(unsigned& c) const
-{
-    if(amount_completed == 0)
-    {
-        if(c < std::get<idx>(graphs).get().size())
-            return SkipResult::PASS;
+template <unsigned idx>
+SkipResult BackendEdge::skip_invalid(unsigned &c) const {
+  if (amount_completed == 0) {
+    if (c < std::get<idx>(graphs).get().size())
+      return SkipResult::PASS;
 
-        return SkipResult::FAIL;
-    }
+    return SkipResult::FAIL;
+  }
 
-    auto ptr = dst_ptr;
-    while(ptr != src_ptr->end() && c > *ptr) ++ptr;
-    if(ptr == src_ptr->end()) return SkipResult::FAIL;
-    if(*ptr == c) return SkipResult::PASS;
-    c = *ptr;
-    return SkipResult::CHANGEPASS;
+  auto ptr = dst_ptr;
+  while (ptr != src_ptr->end() && c > *ptr)
+    ++ptr;
+  if (ptr == src_ptr->end())
+    return SkipResult::FAIL;
+  if (*ptr == c)
+    return SkipResult::PASS;
+  c = *ptr;
+  return SkipResult::CHANGEPASS;
 }
 
-template<unsigned idx>
-void BackendEdge::begin() { if(amount_completed == 1) dst_ptr = src_ptr->begin(); }
-
-template<unsigned idx>
-void BackendEdge::fixate(unsigned c)
-{
-    if(++amount_completed == 1) src_ptr = std::get<idx>(graphs).get().begin() + c;
-    else
-    {
-        for(auto ptr = dst_ptr; ptr != src_ptr->end(); ptr++)
-        {
-            if(*ptr >= c)
-            {
-                dst_ptr = ptr;
-                return;
-            }
-        }
-    }
+template <unsigned idx> void BackendEdge::begin() {
+  if (amount_completed == 1)
+    dst_ptr = src_ptr->begin();
 }
 
-template<unsigned idx>
-void BackendEdge::resume() { amount_completed--; }
+template <unsigned idx> void BackendEdge::fixate(unsigned c) {
+  if (++amount_completed == 1)
+    src_ptr = std::get<idx>(graphs).get().begin() + c;
+  else {
+    for (auto ptr = dst_ptr; ptr != src_ptr->end(); ptr++) {
+      if (*ptr >= c) {
+        dst_ptr = ptr;
+        return;
+      }
+    }
+  }
+}
 
-template SkipResult BackendEdge::skip_invalid<0>(unsigned&) const;
-template SkipResult BackendEdge::skip_invalid<1>(unsigned&) const;
+template <unsigned idx> void BackendEdge::resume() { amount_completed--; }
+
+template SkipResult BackendEdge::skip_invalid<0>(unsigned &) const;
+template SkipResult BackendEdge::skip_invalid<1>(unsigned &) const;
 template void BackendEdge::begin<0>();
 template void BackendEdge::begin<1>();
 template void BackendEdge::fixate<0>(unsigned);
