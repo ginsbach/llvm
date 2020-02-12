@@ -56,7 +56,7 @@ cd "$ARTIFACT_ROOT/SNU_NPB-1.0.3/NPB3.3-SER-C/"
 make \
   CC="$ARTIFACT_ROOT/cc-install/bin/clang" \
   CFLAGS="-O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops" \
-  CLINKFLAGS="-L$ARTIFACT_ROOT/lib -lspmv_csr_naive" \
+  CLINKFLAGS="-L$ARTIFACT_ROOT/install/lib -lspmv_csr_naive" \
   CLASS=A \
   -B cg
 
