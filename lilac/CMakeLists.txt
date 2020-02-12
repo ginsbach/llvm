@@ -1,10 +1,7 @@
-find_package(OpenBLAS)
-
 add_custom_target(lilac_target
   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
           ${CMAKE_CURRENT_BINARY_DIR}/CustomPassReplacerLiLACGenerated.h
           gemm_naive
-          gemm_openblas
           spmv_csr_naive
           spmv_jds_naive
 )
@@ -37,10 +34,6 @@ add_library(gemm_naive SHARED
   ${CMAKE_CURRENT_BINARY_DIR}/gemm_naive.cc
 )
 
-add_library(gemm_openblas SHARED
-    ${CMAKE_CURRENT_BINARY_DIR}/gemm_openblas.cc
-)
-
 add_library(spmv_csr_naive SHARED
     ${CMAKE_CURRENT_BINARY_DIR}/spmv_csr_naive.cc
 )
@@ -48,17 +41,6 @@ add_library(spmv_csr_naive SHARED
 add_library(spmv_jds_naive SHARED
     ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds_naive.cc
 )
-
-target_link_libraries(gemm_openblas ${OpenBLAS_LIBRARY} pthread)
-target_include_directories(gemm_openblas PRIVATE ${OpenBLAS_INCLUDE_DIRS})
-
-install(
-  TARGETS
-    gemm_naive
-    gemm_openblas
-    spmv_jds_naive
-    spmv_csr_naive
-  DESTINATION lib/)
 
 set(CMAKE_CXX_STANDARD 17)
 
