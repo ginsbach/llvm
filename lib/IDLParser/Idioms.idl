@@ -14,7 +14,6 @@ Constraint ReadZeroRanges
 #       and {scope} as {scope} at {iter_end_read})
 End
 
-
 Constraint ReadRanges
 ( ( ( {range_end} is load instruction and
       {range_end} reaches phi node {range_begin} from {scope.end} and
@@ -40,67 +39,54 @@ End
 # These are some buidling blocks for the toplevel constraints.
 
 Constraint ForNest
-( inherits For at {for[0]} and
-  {begin} is the same as {for[0].begin} and
-  {successor} is the same as {for[0].successor} and
-  ( inherits For at {for[i+1]} and
-    {for[i].loop.begin} spans block to {blockend[i]} and
-    ( {blockend[i]} is the same as {for[i+1].begin} or
-      ( {blockend[i]} has control flow to {for[i+1].begin} and
-        {blockend[i]} control flow dominates {for[i+1].begin} and
-        {for[i+1].begin} strictly control flow post dominates {blockend[i]})) and
-    {for[i+1].successor} spans block to {for[i].loop.end}) for all i=0..N-1)
+( inherits For at {for[i]} for all i=0..N and
+  ( ( {for[i].begin} spans block to {for[i+1].precursor} and
+      {for[i+1].successor} spans block to {for[i].end} and
+      {conditional[i].precursor} is unused and
+      {conditional[i].begin} is unused and
+      {conditional[i].end} is unused and
+      {conditional[i].successor} is unused) or
+    ( {for[i].begin} spans block to {conditional[i].precursor} and 
+      {conditional[i].precursor} has control flow to {conditional[i].begin} and
+      {conditional[i].begin} spans block to {for[i+1].precursor} and
+      {for[i+1].successor} spans block to {conditional[i].end} and
+      {conditional[i].end} has control flow to {conditional[i].successor} and
+      {conditional[i].precursor} has control flow to {conditional[i].successor} and
+      {conditional[i].successor} spans block to {for[i].end})) for all i=0..N-1)
 End
 
-
 Constraint DotProductLoopAlphaBeta
-( inherits DotProductLoop with {src1} as {src1}
-                              and {src2} as {src2} at {loop} and
+( inherits DotProductFor
+      with {src1} as {src1}
+       and {src2} as {src2} at {loop} and
   ( ( {loop.initial} is load instruction and
       {update_address} has data flow to {loop.initial}) or
     ( {loop.initial} is floating point zero and
       {update_address} is gep instruction)) and
-  {old_ind} reaches phi node {raw_final} from {loop.end} and
-  ( ( {raw_final} is the same as {raw_final2} and
-      {exit_break} is unused) or
-    {raw_final} reaches phi node {raw_final2} from {exit_break}) and
+  ( ( {loop.use_dotvalue} is the same as {raw_final} and
+      {conditional[2].end} is unused) or
+    ( {loop.use_dotvalue} reaches phi node
+          {raw_final} from {conditional[2].end})) and
   {final_value} is first argument of {output.store} and
   inherits Addition with {scaled_reduc} as {input}
                      and {final_value}  as {value}
                      and {scaled_prev}  as {addend} and
-  inherits Multiplication with {raw_final2}   as {input}
+  inherits Multiplication with {raw_final}    as {input}
                            and {scaled_reduc} as {value}
                            and {alpha}        as {multiplier} and
-  inherits LocalConst
-      with {begin} as {scope.begin}
-       and {alpha} as {value} and
+  inherits LocalConst with {alpha} as {value} and
   inherits Multiplication with {prev}        as {input}
                            and {scaled_prev} as {value}
                            and {beta}        as {multiplier} and
+  inherits LocalConst with {beta} as {value} and
   ( ( {prev} is unused and
       {update_address} is gep instruction) or
     ( {prev} is load instruction and
-      {update_address} is first argument of {prev})) and
-  inherits LocalConst
-      with {begin} as {scope.begin}
-       and {beta}  as {value})
+      {update_address} is first argument of {prev})))
 End
-
-Constraint DotProductLoop
-( inherits For and
-  inherits InductionVar and
-  {new_ind} is fadd instruction and
-  inherits ArgumentsPermuted with {new_ind}  as {dst}
-                              and {old_ind}  as {src1}
-                              and {dotvalue} as {src2} and
-  {dotvalue} is fmul instruction and
-  inherits ArgumentsPermuted with {dotvalue} as {dst} and
-  {initial} reaches phi node {old_ind} from {precursor})
-End
-
 
 Constraint DotProductFor
-( inherits For2 and
+( inherits For and
   {dotvalue} reaches phi node {prev_dotvalue} from {end} and
   {dotvalue} is fadd instruction and
   inherits ArgumentsPermuted
@@ -138,53 +124,6 @@ Constraint RangeCheck
 End
 
 Constraint For
-( inherits Loop at {loop} and
-  inherits InductionVar
-      with {iterator}  as {old_ind}
-       and {increment} as {new_ind} at {loop} and
-  {iter_begin} has data flow to {iterator} and
-  inherits LocalConst
-      with {iter_begin} as {value}
-       and {loop}       as {scope} and
-  inherits OffsetAdd
-      with {increment} as {value}
-       and {iterator}  as {base}
-       and {iter_step} as {offset} at {loop} and
-  {comparison} is first argument of {loop.end} and
-  inherits RangeCheck
-      with {comparison} as {value}
-       and {increment}  as {input}
-       and {iter_end}   as {limit} at {loop} and
-
-  collect k 1
-  ( ( ( {loop.begin} control flow post dominates {loop.precursor} and
-        {optional.preheader[k]} spans block to {loop.precursor}) or
-      ( {loop.precursor} has control flow to {loop.begin} and
-        {optional.preheader[k]} is the same as {loop.begin})) and
-    {optional.condjump[k]} has control flow to {optional.preheader[k]} and
-    {optional.condjump[k]} strictly control flow dominates {optional.preheader[k]} and
-    {optional.condjump[k]} has control flow to {optional.condtarget[k]} and
-    {optional.comparison[k]} has data flow to {optional.condjump[k]} and
-    {optional.comparison[k]} is icmp instruction and
-    {iter_end} has data flow to {optional.comparison[k]} and
-    ( ( {optional.condtarget[k]} is the same as {loop.successor} and
-        {optional.innerend[k]} is unused) or
-      ( {loop.successor} spans block to {optional.innerend[k]} and
-        {optional.innerend[k]} has control flow to {optional.condtarget[k]}))) and
-
-  ( ( {optional.condjump[0]} is unused and
-      {begin} is the same as {loop.begin}) or
-    ( {optional.condjump[0]} is branch instruction and
-      {begin} is the same as {optional.condjump[0]} and
-      {loop.begin} is instruction)) and
-  ( ( {optional.condtarget[0]} is unused and
-      {successor} is the same as {loop.successor}) or
-    ( {optional.condtarget[0]} is instruction and
-      {loop.successor} is instruction and
-      {successor} is the same as {optional.condtarget[0]})))
-End
-
-Constraint For2
 ( inherits Loop and
   {increment} reaches phi node {iterator} from {end} and
   {increment} is first argument of {comparison} and

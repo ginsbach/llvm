@@ -593,17 +593,21 @@ string generate_idl(const LiLACWhat& what)
                    "  inherits MatrixStore\n"
                    "      with {outer_loop.iterator} as {col}\n"
                    "       and {map_loop.iterator}   as {row}\n"
-                   "       and {begin} as {begin}    at {output} and\n"
+                   "       and {outer_loop.begin}    as {begin}\n"
+                   "                                 at {output} and\n"
                    "  inherits MatrixRead\n" 
                    "      with {outer_loop.iterator} as {col}\n"
                    "       and {dot_loop.iterator}   as {row}\n"
-                   "       and {begin} as {begin}    at {left} and\n"
+                   "       and {outer_loop.begin}    as {begin}\n"
+                   "                                 at {left} and\n"
                    "  inherits MatrixRead\n"
                    "      with {map_loop.iterator} as {col}\n"
                    "       and {dot_loop.iterator} as {row}\n"
-                   "       and {begin} as {begin}  at {right} and\n"
+                   "       and {outer_loop.begin}  as {begin}\n"
+                   "                               at {right} and\n"
                    "  inherits DotProductLoopAlphaBeta\n"
-                   "      with {dot_loop}       as {loop}\n"
+                   "      with {outer_loop}     as {scope}\n"
+                   "       and {dot_loop}       as {loop}\n"
                    "       and {left.value}     as {src1}\n"
                    "       and {right.value}    as {src2}\n"
                    "       and {output.address} as {update_address})";
@@ -611,7 +615,7 @@ string generate_idl(const LiLACWhat& what)
         else if(front.isnode("map"))
         {
             string new_loop = last_loop.empty()?"outer_loop":"map_loop";
-            code = code+(code.empty()?"( ":" and\n  ")+"inherits For2 at {"+new_loop+"}";
+            code = code+(code.empty()?"( ":" and\n  ")+"inherits For at {"+new_loop+"}";
             if(!last_loop.empty())
                 code += " and\n  {"+last_loop+".begin} strictly\n"
                               "      control flow dominates {"+new_loop+".begin} and\n"
