@@ -1,7 +1,7 @@
 #include "llvm/IDL/BackendClasses.hpp"
 
 BackendEdge::BackendEdge(const Graph& gf, const Graph& gb)
-           : graphs{{gf,gb}}, amount_completed(0), src_ptr(nullptr), dst_ptr(nullptr) { }
+           : graphs{{gf,gb}}, amount_completed(0), src_ptr(), dst_ptr() { }
 
 template<unsigned idx>
 SkipResult BackendEdge::skip_invalid(unsigned& c) const
