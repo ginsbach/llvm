@@ -1,5 +1,4 @@
 find_package(OpenBLAS)
-find_package(BLAS)
 
 add_custom_target(lilac_target
   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Idioms.idl
@@ -50,15 +49,16 @@ add_library(spmv_jds_naive SHARED
     ${CMAKE_CURRENT_BINARY_DIR}/spmv_jds_naive.cc
 )
 
-if(BLAS_LIBRARIES AND BLAS_INCLUDE_DIRS)
-  target_link_libraries(gemm_openblas ${BLAS_LIBRARIES})
-  target_include_directories(gemm_openblas PRIVATE ${BLAS_INCLUDE_DIRS})
-elseif(OpenBLAS_LIBRARIES AND OpenBLAS_INCLUDE_DIRS)
-  target_link_libraries(gemm_openblas ${OpenBLAS_LIBRARIES})
-  target_include_directories(gemm_openblas PRIVATE ${OpenBLAS_INCLUDE_DIRS})
-else()
-  message(FATAL_ERROR "Couldn't find BLAS or OpenBLAS variables")
-endif()
+target_link_libraries(gemm_openblas ${OpenBLAS_LIBRARY} pthread)
+target_include_directories(gemm_openblas PRIVATE ${OpenBLAS_INCLUDE_DIRS})
+
+install(
+  TARGETS
+    gemm_naive
+    gemm_openblas
+    spmv_jds_naive
+    spmv_csr_naive
+  DESTINATION lib/)
 
 set(CMAKE_CXX_STANDARD 17)
 
