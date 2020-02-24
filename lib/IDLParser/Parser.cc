@@ -341,21 +341,16 @@ bool SyntaxTree::operator!=(const SyntaxTree& t) const
 // syntax node of type "#". Otherwise, the parser throws a syntax error here.
 ParseBranch::operator vector<SyntaxTree>() &&
 {
-    auto it = move(tail);
-    vector<SyntaxTree> trees{move(*this)};
+    vector<SyntaxTree> trees;
 
+    auto it = this;
     while(it != nullptr)
     {
-        auto next_it = move(it->tail);
-        trees.push_back(move(*it));
-        it = next_it;
-    }
-
-    for(size_t i = 0; i < trees.size(); i++)
-    {
-        if(trees[i].isnode("#"))
-            trees[i] = trees[i][0];
+        auto next_it = &*it->tail;
+        if(it->isnode("#"))
+            trees.push_back(move(move((SyntaxTree&)*it).children()[0]));
         else throw string("There was a syntax error.");
+        it = next_it;
     }
 
     return trees;
